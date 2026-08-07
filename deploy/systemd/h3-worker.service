@@ -1,0 +1,20 @@
+[Unit]
+Description=Jinxiu H3 single-GPU video worker
+After=network-online.target postgresql.service redis-server.service h3-comfyui.service
+Requires=postgresql.service redis-server.service h3-comfyui.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/workspace/h3-video-platform/backend
+EnvironmentFile=/home/ubuntu/workspace/h3-video-platform/.env
+ExecStart=/home/ubuntu/workspace/h3-video-platform/backend/.venv/bin/python -m app.workers.video_worker
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target
+
