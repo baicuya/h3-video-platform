@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
 
 from app.api.routes import video_jobs as video_jobs_route
 from app.models.asset import Asset
+from app.models.video_job import VideoJob
 
-from .conftest import TestSession
+from .conftest import TestSession, fake_redis
 from .helpers import create_user, login
 
 
@@ -31,6 +33,51 @@ async def create_assets(user_id: str, specs: list[tuple[str, str]]) -> list[str]
         for asset in assets:
             await db.refresh(asset)
         return [asset.id for asset in assets]
+
+
+@pytest.mark.asyncio
+async def test_job_is_committed_before_it_is_published_to_queue(client, monkeypatch):
+    await create_user(username="queue-order")
+    assert (await login(client, "queue-order")).status_code == 200
+    original_rpush = fake_redis.rpush
+
+    async def assert_committed_before_push(key: str, *values: str):
+        async with TestSession() as db:
+            job = await db.get(VideoJob, values[0])
+            assert job is not None
+            assert job.status == "queued"
+        return await original_rpush(key, *values)
+
+    monkeypatch.setattr(fake_redis, "rpush", assert_committed_before_push)
+    response = await client.post(
+        "/api/v1/video-jobs",
+        json={"mode": "t2v", "prompt": "Queue safely", "resolution": "480p"},
+    )
+
+    assert response.status_code == 201
+    assert fake_redis.lists["h3:video_jobs"] == [response.json()["id"]]
+
+
+@pytest.mark.asyncio
+async def test_queue_publish_failure_marks_job_failed(client, monkeypatch):
+    user = await create_user(username="queue-failure")
+    assert (await login(client, "queue-failure")).status_code == 200
+
+    async def fail_rpush(_key: str, *_values: str):
+        raise ConnectionError("redis unavailable")
+
+    monkeypatch.setattr(fake_redis, "rpush", fail_rpush)
+    response = await client.post(
+        "/api/v1/video-jobs",
+        json={"mode": "t2v", "prompt": "Fail clearly", "resolution": "480p"},
+    )
+
+    assert response.status_code == 503
+    async with TestSession() as db:
+        job = await db.scalar(select(VideoJob).where(VideoJob.user_id == user.id))
+        assert job is not None
+        assert job.status == "failed"
+        assert job.error_code == "QUEUE_UNAVAILABLE"
 
 
 @pytest.mark.asyncio

@@ -102,9 +102,11 @@ async def test_admin_queue_includes_job_owner_time_and_dimensions(client):
     assert body["length"] == 1
     assert [job["id"] for job in body["jobs"]] == [running.id, queued.id]
     assert body["jobs"][0]["queue_position"] is None
+    assert body["jobs"][0]["queue_state"] == "running"
     assert body["jobs"][0]["user_role"] == "admin"
     queued_body = body["jobs"][1]
     assert queued_body["queue_position"] == 1
+    assert queued_body["queue_state"] == "waiting"
     assert queued_body["username"] == "jx_001"
     assert queued_body["display_name"] == "Jx_001"
     assert queued_body["user_role"] == "user"
@@ -113,3 +115,10 @@ async def test_admin_queue_includes_job_owner_time_and_dimensions(client):
     assert (queued_body["width"], queued_body["height"]) == (1280, 736)
     assert queued_body["duration_seconds"] == 15
     assert queued_body["created_at"]
+
+    await fake_redis.delete("h3:video_jobs")
+    recovered_view = await client.get("/api/v1/system/queue")
+    orphan = next(job for job in recovered_view.json()["jobs"] if job["id"] == queued.id)
+    assert recovered_view.json()["length"] == 1
+    assert orphan["queue_position"] is None
+    assert orphan["queue_state"] == "recovering"

@@ -144,10 +144,21 @@ async def enqueue_job(
         stage="排队中",
     )
     db.add(job)
-    await db.flush()
-    await redis.rpush(QUEUE_KEY, job.id)
     await db.commit()
     await db.refresh(job)
+    try:
+        await redis.rpush(QUEUE_KEY, job.id)
+    except Exception as exc:
+        job.status = "failed"
+        job.stage = "入队失败"
+        job.error_code = "QUEUE_UNAVAILABLE"
+        job.error_message = "任务队列暂时不可用，请稍后重试"
+        job.finished_at = datetime.now(UTC)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="任务队列暂时不可用，请稍后重试",
+        ) from exc
     return job
 
 

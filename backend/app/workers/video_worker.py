@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.comfyui.client import ComfyUIClient
@@ -22,6 +23,36 @@ from app.services.workflows import WorkflowService
 logger = logging.getLogger("h3.worker")
 QUEUE_KEY = "h3:video_jobs"
 GPU_LOCK_KEY = "h3:gpu:lock"
+ORPHAN_GRACE_SECONDS = 10
+
+
+async def recover_orphaned_jobs(
+    *,
+    db_factory: Any = None,
+    redis: Any = None,
+    grace_seconds: int = ORPHAN_GRACE_SECONDS,
+) -> int:
+    session_factory = db_factory or SessionLocal
+    queue = redis or redis_client
+    cutoff = datetime.now(UTC) - timedelta(seconds=grace_seconds)
+    async with session_factory() as db:
+        queued_ids = list(
+            (
+                await db.scalars(
+                    select(VideoJob.id)
+                    .where(VideoJob.status == "queued", VideoJob.created_at <= cutoff)
+                    .order_by(VideoJob.created_at.asc())
+                )
+            ).all()
+        )
+    if not queued_ids:
+        return 0
+    pending_ids = set(await queue.lrange(QUEUE_KEY, 0, -1))
+    missing_ids = [job_id for job_id in queued_ids if job_id not in pending_ids]
+    if missing_ids:
+        await queue.rpush(QUEUE_KEY, *missing_ids)
+        logger.warning("Recovered %s orphaned video job(s): %s", len(missing_ids), missing_ids)
+    return len(missing_ids)
 
 
 async def publish(job: VideoJob) -> None:
@@ -143,12 +174,14 @@ async def process_job(job_id: str) -> None:
 
 async def worker_loop() -> None:
     logger.info("Video worker started; GPU concurrency is fixed at 1")
+    await recover_orphaned_jobs()
     while True:
         if await redis_client.get("h3:queue:paused"):
             await asyncio.sleep(2)
             continue
-        item = await redis_client.blpop(QUEUE_KEY, timeout=0)
+        item = await redis_client.blpop(QUEUE_KEY, timeout=5)
         if not item:
+            await recover_orphaned_jobs()
             continue
         _, job_id = item
         lock = redis_client.lock(GPU_LOCK_KEY, timeout=7_200, blocking_timeout=30)
@@ -175,5 +208,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 

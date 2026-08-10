@@ -7,7 +7,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 from redis.asyncio import Redis
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.comfyui.client import ComfyUIClient
@@ -119,7 +119,6 @@ async def health(
 async def gpu_status(
     _: Annotated[User, Depends(require_admin)],
     db: Annotated[AsyncSession, Depends(get_db)],
-    redis: Annotated[Redis, Depends(get_redis)],
 ) -> dict[str, Any]:
     query = (
         "name,memory.used,memory.total,utilization.gpu,temperature.gpu"
@@ -136,6 +135,9 @@ async def gpu_status(
     current_job = await db.scalar(
         select(VideoJob.id).where(VideoJob.status.in_(["preparing", "running", "encoding"]))
     )
+    logical_queue_length = int(
+        await db.scalar(select(func.count(VideoJob.id)).where(VideoJob.status == "queued")) or 0
+    )
     resources = await _system_resources()
     return {
         "name": fields[0] if len(fields) > 0 else "unknown",
@@ -144,7 +146,7 @@ async def gpu_status(
         "utilization_percent": int(fields[3]) if len(fields) > 3 else None,
         "temperature_c": int(fields[4]) if len(fields) > 4 else None,
         "current_job": current_job,
-        "queue_length": int(await redis.llen("h3:video_jobs")),
+        "queue_length": logical_queue_length,
         **resources,
     }
 
@@ -162,7 +164,6 @@ async def queue_status(
     db: Annotated[AsyncSession, Depends(get_db)],
     redis: Annotated[Redis, Depends(get_redis)],
 ) -> dict[str, Any]:
-    pending_length = int(await redis.llen("h3:video_jobs"))
     pending_ids = await redis.lrange("h3:video_jobs", 0, 99)
     active_ids = list(
         (
@@ -173,7 +174,17 @@ async def queue_status(
             )
         ).all()
     )
-    ordered_ids = list(dict.fromkeys([*active_ids, *pending_ids]))
+    database_queued_ids = list(
+        (
+            await db.scalars(
+                select(VideoJob.id)
+                .where(VideoJob.status == "queued")
+                .order_by(VideoJob.created_at.asc())
+                .limit(100)
+            )
+        ).all()
+    )
+    ordered_ids = list(dict.fromkeys([*active_ids, *pending_ids, *database_queued_ids]))
     jobs_by_id: dict[str, tuple[VideoJob, User]] = {}
     if ordered_ids:
         rows = (
@@ -201,6 +212,13 @@ async def queue_status(
                 "id": job.id,
                 "status": job.status,
                 "queue_position": position_by_id.get(job.id),
+                "queue_state": (
+                    "running"
+                    if job.id in active_ids
+                    else "waiting"
+                    if job.id in position_by_id
+                    else "recovering"
+                ),
                 "mode": job.mode,
                 "duration_seconds": job.duration_seconds,
                 "aspect_ratio": job.aspect_ratio,
@@ -217,7 +235,7 @@ async def queue_status(
         )
     return {
         "paused": bool(await redis.get("h3:queue:paused")),
-        "length": pending_length,
+        "length": len(database_queued_ids),
         "jobs": jobs,
     }
 
