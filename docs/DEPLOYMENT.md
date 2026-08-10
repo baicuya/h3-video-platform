@@ -87,10 +87,20 @@
 
 平台级端到端验收经公网 Nginx 上传素材并创建任务 `47fbbf8f-b228-48ce-bbe7-438fdccecc39`，worker 对应 ComfyUI prompt `528b95a1-227a-46ff-b63d-619a4bf7e3f4`。任务完成并写入用户隔离目录；公网媒体返回 200，输出为 H.264 864×480@24fps、AAC 32kHz 双声道、5.167 秒。
 
+## Phase 9：MiniMax H3 Turbo 档位 — 通过
+
+- 安装 `ComfyUI-MiniMax-H3-Turbo`，固定 Git `55fee864dd7b2976b1c4ce3c3d5f7968f181409f`
+- 安装 `minimax_h3_turbo_v4_step600_ema.safetensors`（779849816 bytes），SHA-256 `5f3a626cd72c93a8b9318d6760c510bc5092d2ab13aaba1f932c5bab07a416d3`
+- 数据库迁移 `3a8f5c1d9e72` 增加 `generation_profile`；旧任务回填为 `quality`，新任务默认 `turbo`
+- 创建页开放 Turbo 8 步、极速 6 步和高质量 20 步三个固定档位；步数由后端锁定，不能由客户端任意覆盖
+- 生产全链路 15 秒 720p Turbo 8 步任务 `4e02cf3a-3b8d-4475-9790-4b0d195e5b83` 在管理员账号下完成，数据库运行时间 268.06 秒，ComfyUI 记录 267.88 秒
+- 输出经 `ffprobe` 验证为 H.264 1280×736@24fps、AAC 32kHz 双声道、15.083 秒、6840640 bytes
+- 更新后后端全量测试 33 passed，前端 lint/build 通过，DB/Redis/ComfyUI/GPU 健康检查全部正常
+
 ## 最终验收
 
 - `scripts/healthcheck.sh`：DB、Redis、ComfyUI、GPU 及 Nginx 全部通过
-- 后端测试：10 passed
+- 后端测试：33 passed
 - 前端 lint/build：通过
 - 管理员 `admin` 已通过 CLI 创建；公网 Cookie 登录与管理员用户列表实测通过
 - `/register` 与 `/api/v1/auth/register` 均为 404

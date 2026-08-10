@@ -42,7 +42,7 @@ sudo systemctl status h3-comfyui h3-backend h3-worker h3-frontend nginx --no-pag
 
 ## 模型精度
 
-所有生成模式统一使用 MiniMax H3 INT8 模型，以降低显存占用并保持单 GPU 服务稳定。
+所有生成模式统一使用 MiniMax H3 INT8 模型，以降低显存占用并保持单 GPU 服务稳定。创建页可切换三种服务端固定档位：默认 Turbo 8 步、极速 6 步和原始高质量 20 步；前两档加载 MiniMax H3 Turbo LoRA，高质量档保持原工作流。
 
 ## 架构
 

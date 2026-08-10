@@ -24,7 +24,7 @@ from app.schemas.video_job import (
 )
 from app.services.media import media_duration_seconds
 from app.services.storage import LocalStorageProvider
-from app.services.workflows import WorkflowService
+from app.services.workflows import GENERATION_PROFILES, WorkflowService
 
 
 router = APIRouter(prefix="/video-jobs", tags=["video-jobs"])
@@ -122,6 +122,7 @@ async def enqueue_job(
     if payload.mode == "ref2va" and not settings.ref2va_enabled:
         raise HTTPException(status_code=422, detail="全能参考尚未启用")
     await validate_assets(db, user, payload.mode, payload.asset_ids)
+    profile = GENERATION_PROFILES[payload.generation_profile]
     position = int(await redis.llen(QUEUE_KEY)) + 1
     job = VideoJob(
         user_id=user.id,
@@ -133,7 +134,8 @@ async def enqueue_job(
         aspect_ratio=payload.aspect_ratio,
         resolution=payload.resolution,
         seed=payload.seed,
-        steps=payload.steps,
+        generation_profile=payload.generation_profile,
+        steps=int(profile["steps"]),
         flow_shift=payload.flow_shift,
         audio_flow_shift=payload.audio_flow_shift,
         input_assets=payload.asset_ids,

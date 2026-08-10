@@ -5,7 +5,7 @@ import { ArrowUpRight, Download, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { VideoJob } from "@/lib/types";
-import { formatDate, modeLabel, statusLabel } from "@/lib/utils";
+import { formatDate, generationProfileLabel, modeLabel, statusLabel } from "@/lib/utils";
 
 function tone(status: string): "neutral" | "success" | "warning" | "danger" | "accent" {
   if (status === "completed") return "success";
@@ -45,7 +45,7 @@ export function JobCard({
         </div>
         <p className="mt-3 line-clamp-2 min-h-10 text-sm leading-5 text-slate-700">{job.prompt}</p>
         <p className="mt-3 text-xs text-slate-400">
-          {modeLabel(job.mode)} · {job.aspect_ratio} · {job.duration_seconds}s
+          {modeLabel(job.mode)} · {generationProfileLabel(job.generation_profile)} · {job.aspect_ratio} · {job.duration_seconds}s
         </p>
         <div className="mt-4 flex items-center gap-1 border-t border-slate-100 pt-3">
           <Button asChild variant="ghost" size="sm">

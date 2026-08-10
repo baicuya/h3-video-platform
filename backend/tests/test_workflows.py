@@ -11,7 +11,8 @@ from app.services.workflows import WorkflowService
 WORKFLOW_ROOT = Path(__file__).resolve().parents[2] / "workflows"
 
 
-def make_job(mode: str) -> VideoJob:
+def make_job(mode: str, profile: str = "quality") -> VideoJob:
+    steps = {"turbo": 8, "fast": 6, "quality": 20}[profile]
     return VideoJob(
         user_id="user-id",
         mode=mode,
@@ -19,8 +20,9 @@ def make_job(mode: str) -> VideoJob:
         duration_seconds=5,
         aspect_ratio="16:9",
         resolution="480p",
+        generation_profile=profile,
         seed=42,
-        steps=20,
+        steps=steps,
         input_assets=[],
         workflow_name=f"h3_{mode}_int8.json",
     )
@@ -59,6 +61,52 @@ def test_build_supported_int8_workflows(mode: str):
         assert condition["ref_videos.ref_video_0"] == ["17", 0]
         assert not any(key.startswith("ref_video_audios.") for key in condition)
         assert condition["ref_audios.ref_audio_0"] == ["18", 0]
+
+
+@pytest.mark.parametrize(("profile", "steps"), [("turbo", 8), ("fast", 6)])
+@pytest.mark.parametrize("mode", ["t2v", "i2v", "ref2va"])
+def test_build_turbo_profiles(mode: str, profile: str, steps: int):
+    comfy_assets = {
+        "t2v": [],
+        "i2v": [("image", "first.png")],
+        "ref2va": [("image", "person.png")],
+    }[mode]
+
+    workflow = WorkflowService(root=WORKFLOW_ROOT).build(
+        make_job(mode, profile), comfy_assets
+    )
+
+    assert workflow["900"] == {
+        "class_type": "MiniMaxH3TurboLoRA",
+        "inputs": {
+            "model": ["1", 0],
+            "lora_name": "minimax_h3_turbo_v4_step600_ema.safetensors",
+            "strength": 1.0,
+            "low_vram": False,
+        },
+        "_meta": {"title": "MiniMax H3 Turbo LoRA"},
+    }
+    assert workflow["7"]["class_type"] == "MiniMaxH3TurboSampler"
+    assert workflow["8"]["inputs"]["model"] == ["900", 0]
+    assert workflow["8"]["inputs"]["steps"] == steps
+    assert workflow["9"]["inputs"]["model"] == ["900", 0]
+
+
+def test_quality_profile_does_not_load_turbo_lora():
+    workflow = WorkflowService(root=WORKFLOW_ROOT).build(make_job("t2v"))
+
+    assert "900" not in workflow
+    assert workflow["7"]["inputs"]["sampler_name"] == "res_multistep"
+    assert workflow["8"]["inputs"]["model"] == ["1", 0]
+    assert workflow["8"]["inputs"]["steps"] == 20
+
+
+def test_profile_rejects_mismatched_steps():
+    job = make_job("t2v", "turbo")
+    job.steps = 20
+
+    with pytest.raises(ValueError, match="requires 8 steps"):
+        WorkflowService(root=WORKFLOW_ROOT).build(job)
 
 
 def test_rejects_invalid_asset_shape():

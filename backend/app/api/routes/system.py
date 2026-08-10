@@ -223,6 +223,7 @@ async def queue_status(
                 "duration_seconds": job.duration_seconds,
                 "aspect_ratio": job.aspect_ratio,
                 "resolution": job.resolution,
+                "generation_profile": job.generation_profile,
                 "width": width,
                 "height": height,
                 "created_at": job.created_at,

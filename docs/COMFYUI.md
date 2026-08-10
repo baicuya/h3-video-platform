@@ -3,7 +3,8 @@
 ## 固定版本
 
 - ComfyUI：0.30.0，Git `0ab8332bfa41c695b1c104a6535ff1fde81c7939`
-- workflow templates：0.11.31
+- workflow templates：0.11.31-turbo.1
+- MiniMax H3 Turbo 节点：Git `55fee864dd7b2976b1c4ce3c3d5f7968f181409f`
 - PyTorch：2.13.0+cu130
 - SageAttention：2.2.0，Git `eb615cf6cf4d221338033340ee2de1c37fbdba4a`，针对 Blackwell `sm_120` 编译
 - 模型仓库：`Comfy-Org/MiniMax-H3`
@@ -17,6 +18,7 @@
 - ComfyUI 使用 `--gpu-only --use-sage-attention` 启动；本机 98 GB VRAM 足以让单任务模型常驻 GPU。
 - T2V、I2V、Ref2VA 的 INT8 工作流保持 eager 执行；不要接入 `TorchCompileModel`，否则 `comfy_kitchen` 的 INT8 CUDA 算子会在 Dynamo FakeTensor 跟踪期间调用 `__dlpack__` 并失败。
 - SageAttention 依赖 CUDA 13.0 编译器及 cuBLAS、cuSPARSE、cuSOLVER 开发库。升级 PyTorch、CUDA 或 GPU 架构后必须重新编译该扩展。
+- 默认 `turbo` 档加载 `minimax_h3_turbo_v4_step600_ema.safetensors` 并固定 8 步；`fast` 固定 6 步；`quality` 不加载 Turbo LoRA，保留原始 20 步工作流。前端只切换档位，服务端拒绝任意步数。
 
 ## 模型校验
 
@@ -27,6 +29,7 @@
 | Qwen3-VL 32B NVFP4 AWQ | `35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6` |
 | Video VAE FP16 | `7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522` |
 | Audio VAE FP32 | `8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48` |
+| MiniMax H3 Turbo LoRA v4 step600 EMA | `5f3a626cd72c93a8b9318d6760c510bc5092d2ab13aaba1f932c5bab07a416d3` |
 
 ## 支持矩阵
 
@@ -49,6 +52,7 @@
 - Phase 4 API I2V：`6e7dac24-cbb6-4789-bb7e-c30be1fae542`
 - Ref2VA 单图（多素材链路以自动化请求图测试覆盖，尚未做真实 GPU 混合素材验收）：`3ce227de-8531-4cdb-ac8f-69474321d282`，冷启动 181.80 秒
 - 公网平台端到端 Ref2VA：任务 `47fbbf8f-b228-48ce-bbe7-438fdccecc39`，ComfyUI prompt `528b95a1-227a-46ff-b63d-619a4bf7e3f4`
+- 生产链路 Turbo 8 步 T2V：管理员任务 `4e02cf3a-3b8d-4475-9790-4b0d195e5b83`，15 秒、720p、16:9，268.06 秒完成
 
 Ref2VA 输出经 `ffprobe`：H.264 608×352 24fps、AAC 32kHz 双声道、5.167 秒。
 
@@ -56,7 +60,7 @@ Ref2VA 输出经 `ffprobe`：H.264 608×352 24fps、AAC 32kHz 双声道、5.167 
 
 当前生产链路不调用 `/v1/videos` 或 SGLang；后端上传素材到本机 ComfyUI `/upload/image`，然后向 `/prompt` 提交 prompt graph。云端 Hailuo H3 的请求 schema 仅作为字段语义对照，不混入本地工作流。
 
-`WorkflowService` 每次深复制 JSON，根据固定 node map 写入 prompt、尺寸、帧数、seed、steps、输出前缀和已上传图片名。后端会先确认关键节点存在；不会用字符串全局替换，也不接受用户提交任意 workflow。
+`WorkflowService` 每次深复制 JSON，根据固定 node map 写入 prompt、尺寸、帧数、seed、输出前缀和已上传图片名。`turbo`/`fast` 档动态注入 `MiniMaxH3TurboLoRA` 和 `MiniMaxH3TurboSampler`，分别固定 8/6 步；`quality` 使用原始 `res_multistep` 20 步采样。后端会先确认关键节点存在；不会用字符串全局替换，也不接受用户提交任意 workflow 或任意步数。
 
 帧数按 24fps 并对齐 H3 的 17 帧步长。worker 固定单并发，以 Redis 锁保护 GPU。生产输出由 ComfyUI 拉回后保存到 `/home/ubuntu/data/outputs/{user_id}/{job_id}.mp4`。
 

@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { api, ApiError } from "@/lib/api";
-import type { Asset, PageResult, VideoJob } from "@/lib/types";
+import type { Asset, GenerationProfile, PageResult, VideoJob } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Mode = "t2v" | "i2v" | "ref2va";
@@ -37,8 +37,9 @@ type CreateDraft = {
   duration: number;
   aspectRatio: string;
   resolution: string;
+  generationProfile: GenerationProfile;
   seed: number;
-  steps: number;
+  steps?: number;
   advanced: boolean;
   videoTailSeconds: TailSeconds;
   fl2vaAssets: StoredAsset[];
@@ -51,6 +52,12 @@ const modes = [
   { id: "t2v", title: "文生视频 T2VA", description: "只需一段描述，从零生成画面与声音" },
   { id: "i2v", title: "首尾帧 FL2VA", description: "首帧必选、尾帧可选，控制镜头起止画面" },
   { id: "ref2va", title: "全能参考 Ref2VA", description: "组合图片、视频和音频参考生成完整视听内容" },
+] as const;
+
+const generationProfiles = [
+  { id: "turbo", label: "Turbo 8步（推荐）", description: "速度与画质平衡，默认选择" },
+  { id: "fast", label: "极速 6步", description: "更快完成，适合预览和批量尝试" },
+  { id: "quality", label: "高质量 20步", description: "原始模型完整采样，耗时最长" },
 ] as const;
 
 const limits = {
@@ -152,7 +159,7 @@ export default function CreatePage() {
   const [aspectRatio, setAspectRatio] = useState("16:9");
   const [resolution, setResolution] = useState("768p");
   const [seed, setSeed] = useState(-1);
-  const [steps, setSteps] = useState(20);
+  const [generationProfile, setGenerationProfile] = useState<GenerationProfile>("turbo");
   const [videoTailSeconds, setVideoTailSeconds] = useState<TailSeconds>(15);
   const [advanced, setAdvanced] = useState(false);
   const [fl2vaAssets, setFl2vaAssets] = useState<SelectedAsset[]>([]);
@@ -208,7 +215,9 @@ export default function CreatePage() {
       if (["16:9", "9:16", "1:1", "4:3", "3:4"].includes(draft.aspectRatio ?? "")) setAspectRatio(draft.aspectRatio as string);
       if (["480p", "720p", "768p"].includes(draft.resolution ?? "")) setResolution(draft.resolution as string);
       if (typeof draft.seed === "number") setSeed(draft.seed);
-      if (typeof draft.steps === "number") setSteps(draft.steps);
+      if (draft.generationProfile && generationProfiles.some((item) => item.id === draft.generationProfile)) {
+        setGenerationProfile(draft.generationProfile);
+      }
       if (typeof draft.advanced === "boolean") setAdvanced(draft.advanced);
       if ([5, 10, 15].includes(draft.videoTailSeconds ?? 0)) setVideoTailSeconds(draft.videoTailSeconds as TailSeconds);
       setFl2vaAssets(restoreStoredAssets(draft.fl2vaAssets));
@@ -227,9 +236,9 @@ export default function CreatePage() {
       prompt,
       duration,
       aspectRatio,
+      generationProfile,
       resolution,
       seed,
-      steps,
       advanced,
       videoTailSeconds,
       fl2vaAssets: fl2vaAssets.map(({ asset, durationSeconds }) => ({ asset, durationSeconds })),
@@ -245,13 +254,13 @@ export default function CreatePage() {
     aspectRatio,
     draftRestored,
     duration,
+    generationProfile,
     fl2vaAssets,
     mode,
     prompt,
     refAssets,
     resolution,
     seed,
-    steps,
     videoTailSeconds,
   ]);
 
@@ -498,11 +507,11 @@ export default function CreatePage() {
           mode,
           model_variant: "int8",
           prompt,
+          generation_profile: generationProfile,
           duration_seconds: duration,
           aspect_ratio: aspectRatio,
           resolution,
           seed,
-          steps,
           asset_ids: selected.map((item) => item.asset.id),
         }),
       });
@@ -710,6 +719,12 @@ export default function CreatePage() {
             <button type="button" className="flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-medium text-slate-500 hover:bg-slate-100" onClick={() => setAdvanced(!advanced)}>
               高级设置 <ChevronDown className={cn("size-3.5 transition", advanced && "rotate-180")} />
             </button>
+            <label className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-600">
+              生成档位
+              <select className="ml-2 bg-transparent font-semibold text-violet-800 outline-none" value={generationProfile} onChange={(event) => setGenerationProfile(event.target.value as GenerationProfile)}>
+                {generationProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}
+              </select>
+            </label>
             <Button className="ml-auto" variant="accent" size="lg" disabled={submitting || uploadingKind !== null || !prompt.trim()}>
               {submitting ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
               {submitting ? "提交中…" : "生成视频"}
@@ -720,9 +735,9 @@ export default function CreatePage() {
               <label className="text-xs font-medium text-slate-500">Seed（-1 为随机）
                 <input className="mt-2 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-violet-400" type="number" value={seed} onChange={(event) => setSeed(Number(event.target.value))} />
               </label>
-              <label className="text-xs font-medium text-slate-500">Steps
-                <input className="mt-2 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-violet-400" type="number" min={1} max={100} value={steps} onChange={(event) => setSteps(Number(event.target.value))} />
-              </label>
+              <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+                <span className="font-medium text-slate-700">{generationProfiles.find((profile) => profile.id === generationProfile)?.label}</span><span className="mt-1 block">{generationProfiles.find((profile) => profile.id === generationProfile)?.description}；步数和采样器由服务端锁定。</span>
+              </div>
             </div>
           )}
         </div>

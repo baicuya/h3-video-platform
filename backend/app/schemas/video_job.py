@@ -9,13 +9,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 class VideoJobCreate(BaseModel):
     mode: str
     model_variant: Literal["int8"] = "int8"
+    generation_profile: Literal["turbo", "fast", "quality"] = "turbo"
     prompt: str = Field(min_length=1, max_length=10_000)
     negative_prompt: str | None = Field(default=None, max_length=5_000)
     duration_seconds: int = 5
     aspect_ratio: str = "16:9"
     resolution: str = "768p"
     seed: int = -1
-    steps: int = 20
     flow_shift: float | None = None
     audio_flow_shift: float | None = None
     asset_ids: list[str] = Field(default_factory=list)
@@ -48,13 +48,6 @@ class VideoJobCreate(BaseModel):
             raise ValueError("不支持的分辨率")
         return value
 
-    @field_validator("steps")
-    @classmethod
-    def steps_allowed(cls, value: int) -> int:
-        if value < 1 or value > 100:
-            raise ValueError("steps 必须在 1～100 之间")
-        return value
-
 
 class VideoJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -69,6 +62,7 @@ class VideoJobResponse(BaseModel):
     duration_seconds: int
     aspect_ratio: str
     resolution: str
+    generation_profile: str
     seed: int
     steps: int
     flow_shift: float | None

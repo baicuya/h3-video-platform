@@ -31,6 +31,13 @@ WORKFLOW_NODE_MAP = {
     },
 }
 
+TURBO_LORA_NAME = "minimax_h3_turbo_v4_step600_ema.safetensors"
+GENERATION_PROFILES = {
+    "turbo": {"steps": 8, "accelerated": True},
+    "fast": {"steps": 6, "accelerated": True},
+    "quality": {"steps": 20, "accelerated": False},
+}
+
 ASPECT_DIMENSIONS = {
     ("16:9", "480p"): (864, 480),
     ("16:9", "720p"): (1280, 736),
@@ -47,7 +54,7 @@ ASPECT_DIMENSIONS = {
 
 
 class WorkflowService:
-    version = "comfy-template-0.11.31-ref2va.2"
+    version = "comfy-template-0.11.31-turbo.1"
 
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or get_settings().workflow_root
@@ -71,6 +78,34 @@ class WorkflowService:
                 raise ValueError(f"Workflow node {node_id} is missing")
 
         condition = workflow[node_map["condition"]]["inputs"]
+        profile = GENERATION_PROFILES.get(job.generation_profile)
+        if profile is None:
+            raise ValueError(f"Unsupported generation profile: {job.generation_profile}")
+        expected_steps = int(profile["steps"])
+        if job.steps != expected_steps:
+            raise ValueError(
+                f"Generation profile {job.generation_profile} requires {expected_steps} steps"
+            )
+
+        if profile["accelerated"]:
+            workflow["900"] = {
+                "class_type": "MiniMaxH3TurboLoRA",
+                "inputs": {
+                    "model": ["1", 0],
+                    "lora_name": TURBO_LORA_NAME,
+                    "strength": 1.0,
+                    "low_vram": False,
+                },
+                "_meta": {"title": "MiniMax H3 Turbo LoRA"},
+            }
+            workflow["7"] = {
+                "class_type": "MiniMaxH3TurboSampler",
+                "inputs": {},
+                "_meta": {"title": "MiniMax H3 Turbo Sampler"},
+            }
+            workflow["8"]["inputs"]["model"] = ["900", 0]
+            workflow["9"]["inputs"]["model"] = ["900", 0]
+
         width, height = ASPECT_DIMENSIONS.get(
             (job.aspect_ratio, job.resolution),
             ASPECT_DIMENSIONS.get((job.aspect_ratio, "480p"), (864, 480)),
@@ -87,7 +122,7 @@ class WorkflowService:
         )
         seed = job.seed if job.seed >= 0 else secrets.randbits(63)
         workflow[node_map["noise"]]["inputs"]["noise_seed"] = seed
-        workflow[node_map["scheduler"]]["inputs"]["steps"] = job.steps
+        workflow[node_map["scheduler"]]["inputs"]["steps"] = expected_steps
         workflow[node_map["save_video"]]["inputs"][
             "filename_prefix"
         ] = f"video/jobs/{job.id}"

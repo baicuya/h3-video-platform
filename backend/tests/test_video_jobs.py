@@ -94,6 +94,11 @@ async def test_create_query_cancel_and_invalid_mode(client):
         json={"mode": "t2v", "model_variant": "bf16", "prompt": "bad"},
     )
     assert removed_variant.status_code == 422
+    invalid_profile = await client.post(
+        "/api/v1/video-jobs",
+        json={"mode": "t2v", "generation_profile": "custom", "prompt": "bad"},
+    )
+    assert invalid_profile.status_code == 422
 
     created = await client.post(
         "/api/v1/video-jobs",
@@ -114,6 +119,8 @@ async def test_create_query_cancel_and_invalid_mode(client):
     assert detail.status_code == 200
     assert detail.json()["prompt"] == "A calm lake"
     assert detail.json()["workflow_name"] == "h3_t2v_int8.json"
+    assert detail.json()["generation_profile"] == "turbo"
+    assert detail.json()["steps"] == 8
     listing = await client.get("/api/v1/video-jobs?status=queued")
     assert listing.status_code == 200
     assert listing.json()["total"] == 1

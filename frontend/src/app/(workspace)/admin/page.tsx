@@ -23,6 +23,7 @@ type QueueJob = {
   mode: string;
   duration_seconds: number;
   aspect_ratio: string;
+  generation_profile: "turbo" | "fast" | "quality";
   resolution: string;
   width: number;
   height: number;

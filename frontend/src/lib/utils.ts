@@ -20,6 +20,14 @@ export function modeLabel(mode: string) {
   return { t2v: "文生视频 T2VA", i2v: "首尾帧 FL2VA", ref2va: "全能参考 Ref2VA" }[mode] ?? mode;
 }
 
+export function generationProfileLabel(profile: string) {
+  return {
+    turbo: "Turbo 8步",
+    fast: "极速 6步",
+    quality: "高质量 20步",
+  }[profile] ?? profile;
+}
+
 export function statusLabel(status: string) {
   return {
     queued: "排队中",

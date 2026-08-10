@@ -27,8 +27,9 @@ class VideoJob(Base):
     duration_seconds: Mapped[int] = mapped_column(Integer, default=5)
     aspect_ratio: Mapped[str] = mapped_column(String(16), default="16:9")
     resolution: Mapped[str] = mapped_column(String(16), default="768p")
+    generation_profile: Mapped[str] = mapped_column(String(16), default="turbo")
     seed: Mapped[int] = mapped_column(Integer, default=-1)
-    steps: Mapped[int] = mapped_column(Integer, default=20)
+    steps: Mapped[int] = mapped_column(Integer, default=8)
     flow_shift: Mapped[float | None] = mapped_column(Float, nullable=True)
     audio_flow_shift: Mapped[float | None] = mapped_column(Float, nullable=True)
     input_assets: Mapped[list[str]] = mapped_column(JSON, default=list)
@@ -62,8 +63,8 @@ class VideoJob(Base):
             "duration_seconds": self.duration_seconds,
             "aspect_ratio": self.aspect_ratio,
             "resolution": self.resolution,
+            "generation_profile": self.generation_profile,
             "seed": self.seed,
-            "steps": self.steps,
             "flow_shift": self.flow_shift,
             "audio_flow_shift": self.audio_flow_shift,
             "asset_ids": self.input_assets,

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { api } from "@/lib/api";
 import type { VideoJob } from "@/lib/types";
-import { formatDate, modeLabel, statusLabel } from "@/lib/utils";
+import { formatDate, generationProfileLabel, modeLabel, statusLabel } from "@/lib/utils";
 
 export default function TaskPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -123,7 +123,7 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
           <dl className="mt-7 grid gap-5 border-t border-slate-100 pt-6 text-sm sm:grid-cols-3">
             <div><dt className="text-xs text-slate-400">模式</dt><dd className="mt-1 font-medium">{modeLabel(job.mode)}</dd></div>
             <div><dt className="text-xs text-slate-400">规格</dt><dd className="mt-1 font-medium">{job.aspect_ratio} · {job.resolution} · {job.duration_seconds}s</dd></div>
-            <div><dt className="text-xs text-slate-400">Seed / Steps</dt><dd className="mt-1 font-medium">{job.seed} / {job.steps}</dd></div>
+            <div><dt className="text-xs text-slate-400">档位 / Steps</dt><dd className="mt-1 font-medium">{generationProfileLabel(job.generation_profile)} / {job.steps}</dd></div>
             <div><dt className="text-xs text-slate-400">创建时间</dt><dd className="mt-1 font-medium">{formatDate(job.created_at)}</dd></div>
             <div><dt className="text-xs text-slate-400">开始时间</dt><dd className="mt-1 font-medium">{formatDate(job.started_at)}</dd></div>
             <div><dt className="text-xs text-slate-400">完成时间</dt><dd className="mt-1 font-medium">{formatDate(job.finished_at)}</dd></div>

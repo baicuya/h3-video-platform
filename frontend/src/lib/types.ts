@@ -21,6 +21,8 @@ export type Asset = {
   created_at: string;
 };
 
+export type GenerationProfile = "turbo" | "fast" | "quality";
+
 export type VideoJob = {
   id: string;
   user_id: string;
@@ -32,6 +34,7 @@ export type VideoJob = {
   duration_seconds: number;
   aspect_ratio: string;
   resolution: string;
+  generation_profile: GenerationProfile;
   seed: number;
   steps: number;
   input_assets: string[];
