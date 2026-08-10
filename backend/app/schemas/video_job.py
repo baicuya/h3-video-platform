@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class VideoJobCreate(BaseModel):
     mode: str
+    model_variant: Literal["int8"] = "int8"
     prompt: str = Field(min_length=1, max_length=10_000)
     negative_prompt: str | None = Field(default=None, max_length=5_000)
     duration_seconds: int = 5

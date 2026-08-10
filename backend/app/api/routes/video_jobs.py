@@ -213,4 +213,3 @@ async def delete_job(
         raise HTTPException(status_code=409, detail="只能删除已结束的任务")
     await db.delete(job)
     await db.commit()
-

@@ -2,7 +2,47 @@
 
 基于 MiniMax H3、ComfyUI、FastAPI 与 Next.js 的内部视频生成平台。支持文生视频、图生视频，以及已真实验证的单参考图“全能参考”；视频由单 GPU worker 串行执行。系统没有用户注册入口，普通账号只能由管理员在“账号管理”页面开通。
 
-当前临时入口：`http://54.89.116.205`。当前不依赖域名或 HTTPS；正式域名与证书是 2026-08-31 后的可选部署项。
+## 访问入口（先看这里）
+
+当前公网入口：**[http://54.89.116.205](http://54.89.116.205)**
+
+打开首页会自动跳转到登录页。当前使用临时公网 IP 和 HTTP，不依赖域名或 HTTPS；正式域名与证书是 2026-08-31 后的可选部署项。
+
+| 页面 | 公网地址 | 说明 |
+| --- | --- | --- |
+| 登录 | [http://54.89.116.205/login](http://54.89.116.205/login) | 所有用户从这里登录 |
+| 创建视频 | [http://54.89.116.205/create](http://54.89.116.205/create) | 文生视频、图生视频、全能参考 |
+| 任务历史 | [http://54.89.116.205/history](http://54.89.116.205/history) | 查看任务状态和生成结果 |
+| 素材库 | [http://54.89.116.205/assets](http://54.89.116.205/assets) | 查看和管理上传素材 |
+| 管理后台 | [http://54.89.116.205/admin](http://54.89.116.205/admin) | 仅管理员可访问 |
+| 账号管理 | [http://54.89.116.205/admin/users](http://54.89.116.205/admin/users) | 管理员开通、停用或重置普通账号 |
+
+系统不提供自助注册。管理员账号已在服务器初始化，登录凭据不写入 Git 或 README；请向系统管理员获取。普通用户由管理员登录后在“账号管理”中开通，首次登录后按页面提示修改密码。
+
+### 内部服务地址
+
+以下地址只监听服务器的 `127.0.0.1`，不能从公网直接打开：
+
+| 服务 | 本机地址 | 用途 |
+| --- | --- | --- |
+| Next.js | `http://127.0.0.1:3000` | 前端应用 |
+| FastAPI | `http://127.0.0.1:8000` | 后端 API |
+| 后端健康检查 | `http://127.0.0.1:8000/api/v1/health` | 正常时返回 HTTP 200 |
+| ComfyUI | `http://127.0.0.1:8188` | 视频生成引擎，仅供内部调用 |
+| PostgreSQL | `127.0.0.1:5432` | 数据库 |
+| Redis | `127.0.0.1:6379` | 队列与状态 |
+
+如果公网入口打不开，先登录服务器运行：
+
+```bash
+cd /home/ubuntu/workspace/h3-video-platform
+scripts/healthcheck.sh
+sudo systemctl status h3-comfyui h3-backend h3-worker h3-frontend nginx --no-pager
+```
+
+## 模型精度
+
+所有生成模式统一使用 MiniMax H3 INT8 模型，以降低显存占用并保持单 GPU 服务稳定。
 
 ## 架构
 
@@ -95,4 +135,3 @@ journalctl -u nginx -f
 ## 故障排除
 
 先运行 `scripts/healthcheck.sh`，再检查 `systemctl --failed`、worker/ComfyUI 日志、Redis 队列和 `nvidia-smi`。详细步骤见 [docs/OPERATIONS.md](docs/OPERATIONS.md)，模型与工作流说明见 [docs/COMFYUI.md](docs/COMFYUI.md)，接口见 [docs/API.md](docs/API.md)。
-

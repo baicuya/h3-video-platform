@@ -57,7 +57,10 @@ class WorkflowService:
     def build(self, job: VideoJob, comfy_image_name: str | None = None) -> dict[str, Any]:
         if job.mode not in WORKFLOW_NODE_MAP:
             raise ValueError(f"Unsupported workflow mode: {job.mode}")
-        template_path = self.root / f"h3_{job.mode}_int8.json"
+        expected_name = f"h3_{job.mode}_int8.json"
+        if job.workflow_name != expected_name:
+            raise ValueError(f"Unexpected workflow name: {job.workflow_name}")
+        template_path = self.root / expected_name
         with template_path.open("r", encoding="utf-8") as handle:
             workflow = copy.deepcopy(json.load(handle))
         node_map = WORKFLOW_NODE_MAP[job.mode]
@@ -91,4 +94,3 @@ class WorkflowService:
                 raise ValueError(f"{job.mode} requires an uploaded ComfyUI image name")
             workflow[node_map["load_image"]]["inputs"]["image"] = comfy_image_name
         return workflow
-

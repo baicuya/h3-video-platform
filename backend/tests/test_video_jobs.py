@@ -17,6 +17,11 @@ async def test_create_query_cancel_and_invalid_mode(client):
         json={"mode": "unknown", "prompt": "bad"},
     )
     assert invalid.status_code == 422
+    removed_variant = await client.post(
+        "/api/v1/video-jobs",
+        json={"mode": "t2v", "model_variant": "bf16", "prompt": "bad"},
+    )
+    assert removed_variant.status_code == 422
 
     created = await client.post(
         "/api/v1/video-jobs",
@@ -36,6 +41,7 @@ async def test_create_query_cancel_and_invalid_mode(client):
     detail = await client.get(f"/api/v1/video-jobs/{job_id}")
     assert detail.status_code == 200
     assert detail.json()["prompt"] == "A calm lake"
+    assert detail.json()["workflow_name"] == "h3_t2v_int8.json"
     listing = await client.get("/api/v1/video-jobs?status=queued")
     assert listing.status_code == 200
     assert listing.json()["total"] == 1
@@ -95,4 +101,3 @@ async def test_jobs_are_private(client):
     client.cookies.clear()
     assert (await login(client, "other")).status_code == 200
     assert (await client.get(f"/api/v1/video-jobs/{job_id}")).status_code == 404
-

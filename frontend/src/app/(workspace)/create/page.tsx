@@ -75,6 +75,7 @@ export default function CreatePage() {
         method: "POST",
         body: JSON.stringify({
           mode,
+          model_variant: "int8",
           prompt,
           duration_seconds: duration,
           aspect_ratio: aspectRatio,
@@ -199,4 +200,3 @@ export default function CreatePage() {
     </div>
   );
 }
-

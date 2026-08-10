@@ -6,7 +6,7 @@
 - workflow templates：0.11.31
 - PyTorch：2.13.0+cu130
 - 模型仓库：`Comfy-Org/MiniMax-H3`
-- 模型 revision：`eb8a16107c595128b3a578f82d2ce2f75920c355`
+- 模型 revision：`93acf8c91365d40dc32a3abd19af06df6b6f7c65`
 - ComfyUI：`127.0.0.1:8188`，禁止公网直连
 
 模型只保存在 `/home/ubuntu/models/minimax-h3`，通过 `/home/ubuntu/ComfyUI/extra_model_paths.yaml` 引用。
@@ -67,5 +67,4 @@ backend/.venv/bin/python scripts/test_comfyui_t2v.py
 backend/.venv/bin/python scripts/test_comfyui_i2v.py /path/to/image.png
 backend/.venv/bin/python scripts/test_comfyui_ref2va.py /path/to/image.png
 ```
-
 
