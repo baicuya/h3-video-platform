@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, time
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -24,6 +22,7 @@ from app.schemas.video_job import (
     VideoJobQueued,
     VideoJobResponse,
 )
+from app.services.media import media_duration_seconds
 from app.services.storage import LocalStorageProvider
 from app.services.workflows import WorkflowService
 
@@ -38,37 +37,6 @@ async def owned_job(db: AsyncSession, user: User, job_id: str) -> VideoJob:
     if job is None or (job.user_id != user.id and user.role != "admin"):
         raise HTTPException(status_code=404, detail="任务不存在")
     return job
-
-
-async def media_duration_seconds(path: Path) -> float:
-    try:
-        process = await asyncio.create_subprocess_exec(
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-    except OSError as exc:
-        raise ValueError("无法启动 ffprobe 读取素材时长") from exc
-    try:
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=30)
-    except TimeoutError as exc:
-        process.kill()
-        await process.communicate()
-        raise ValueError("读取素材时长超时") from exc
-    try:
-        duration = float(stdout.decode().strip())
-    except ValueError as exc:
-        raise ValueError("无法读取素材时长") from exc
-    if process.returncode != 0 or duration <= 0:
-        raise ValueError("无法读取素材时长")
-    return duration
 
 
 async def validate_assets(

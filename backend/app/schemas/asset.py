@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -19,3 +20,7 @@ class AssetResponse(BaseModel):
 class AssetListResponse(BaseModel):
     items: list[AssetResponse]
     total: int
+
+
+class AssetVideoTrimRequest(BaseModel):
+    duration_seconds: Literal[5, 10, 15]

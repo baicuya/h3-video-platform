@@ -23,12 +23,29 @@ import { cn } from "@/lib/utils";
 
 type Mode = "t2v" | "i2v" | "ref2va";
 type AssetKind = Asset["kind"];
+type TailSeconds = 5 | 10 | 15;
 type SelectedAsset = {
   asset: Asset;
   previewUrl: string;
   durationSeconds: number | null;
 };
 type PickerTarget = { scope: "fl2va" | "ref"; kind: AssetKind };
+type StoredAsset = { asset: Asset; durationSeconds: number | null };
+type CreateDraft = {
+  mode: Mode;
+  prompt: string;
+  duration: number;
+  aspectRatio: string;
+  resolution: string;
+  seed: number;
+  steps: number;
+  advanced: boolean;
+  videoTailSeconds: TailSeconds;
+  fl2vaAssets: StoredAsset[];
+  refAssets: StoredAsset[];
+};
+
+const CREATE_DRAFT_KEY = "h3:create-draft:v1";
 
 const modes = [
   { id: "t2v", title: "文生视频 T2VA", description: "只需一段描述，从零生成画面与声音" },
@@ -73,6 +90,20 @@ async function mediaDurationFromUrl(url: string, kind: AssetKind): Promise<numbe
 
 function contentUrl(asset: Asset) {
   return `/api/v1/assets/${asset.id}/content`;
+}
+
+function restoreStoredAssets(value: unknown): SelectedAsset[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const stored = entry as Partial<StoredAsset>;
+    if (!stored.asset || typeof stored.asset.id !== "string") return [];
+    return [{
+      asset: stored.asset,
+      previewUrl: contentUrl(stored.asset),
+      durationSeconds: typeof stored.durationSeconds === "number" ? stored.durationSeconds : null,
+    }];
+  });
 }
 
 function MaterialCard({
@@ -122,6 +153,7 @@ export default function CreatePage() {
   const [resolution, setResolution] = useState("768p");
   const [seed, setSeed] = useState(-1);
   const [steps, setSteps] = useState(20);
+  const [videoTailSeconds, setVideoTailSeconds] = useState<TailSeconds>(15);
   const [advanced, setAdvanced] = useState(false);
   const [fl2vaAssets, setFl2vaAssets] = useState<SelectedAsset[]>([]);
   const [refAssets, setRefAssets] = useState<SelectedAsset[]>([]);
@@ -132,6 +164,7 @@ export default function CreatePage() {
   const [pickerError, setPickerError] = useState("");
   const [loadingLibrary, setLoadingLibrary] = useState(false);
   const [addingLibrary, setAddingLibrary] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [jobs, setJobs] = useState<VideoJob[]>([]);
@@ -164,6 +197,64 @@ export default function CreatePage() {
     return () => window.clearInterval(timer);
   }, [loadJobs]);
 
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem(CREATE_DRAFT_KEY);
+      if (!raw) return;
+      const draft = JSON.parse(raw) as Partial<CreateDraft>;
+      if (draft.mode && modes.some((item) => item.id === draft.mode)) setMode(draft.mode);
+      if (typeof draft.prompt === "string") setPrompt(draft.prompt);
+      if ([5, 10, 15].includes(draft.duration ?? 0)) setDuration(draft.duration as number);
+      if (["16:9", "9:16", "1:1", "4:3", "3:4"].includes(draft.aspectRatio ?? "")) setAspectRatio(draft.aspectRatio as string);
+      if (["480p", "720p", "768p"].includes(draft.resolution ?? "")) setResolution(draft.resolution as string);
+      if (typeof draft.seed === "number") setSeed(draft.seed);
+      if (typeof draft.steps === "number") setSteps(draft.steps);
+      if (typeof draft.advanced === "boolean") setAdvanced(draft.advanced);
+      if ([5, 10, 15].includes(draft.videoTailSeconds ?? 0)) setVideoTailSeconds(draft.videoTailSeconds as TailSeconds);
+      setFl2vaAssets(restoreStoredAssets(draft.fl2vaAssets));
+      setRefAssets(restoreStoredAssets(draft.refAssets));
+    } catch {
+      window.sessionStorage.removeItem(CREATE_DRAFT_KEY);
+    } finally {
+      setDraftRestored(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!draftRestored) return;
+    const draft: CreateDraft = {
+      mode,
+      prompt,
+      duration,
+      aspectRatio,
+      resolution,
+      seed,
+      steps,
+      advanced,
+      videoTailSeconds,
+      fl2vaAssets: fl2vaAssets.map(({ asset, durationSeconds }) => ({ asset, durationSeconds })),
+      refAssets: refAssets.map(({ asset, durationSeconds }) => ({ asset, durationSeconds })),
+    };
+    try {
+      window.sessionStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify(draft));
+    } catch {
+      // The form remains usable when browser storage is unavailable.
+    }
+  }, [
+    advanced,
+    aspectRatio,
+    draftRestored,
+    duration,
+    fl2vaAssets,
+    mode,
+    prompt,
+    refAssets,
+    resolution,
+    seed,
+    steps,
+    videoTailSeconds,
+  ]);
+
   async function uploadFiles(
     files: File[],
     kind: AssetKind,
@@ -183,6 +274,26 @@ export default function CreatePage() {
       });
     }
     return uploaded;
+  }
+
+  async function trimVideoIfNeeded(item: SelectedAsset): Promise<SelectedAsset> {
+    if (
+      item.asset.kind !== "video"
+      || item.durationSeconds === null
+      || item.durationSeconds <= videoTailSeconds
+    ) {
+      return item;
+    }
+    const clipped = await api<Asset>(`/assets/${item.asset.id}/trim-tail`, {
+      method: "POST",
+      body: JSON.stringify({ duration_seconds: videoTailSeconds }),
+    });
+    URL.revokeObjectURL(item.previewUrl);
+    return {
+      asset: clipped,
+      previewUrl: contentUrl(clipped),
+      durationSeconds: videoTailSeconds,
+    };
   }
 
   async function uploadFl2va(event: ChangeEvent<HTMLInputElement>) {
@@ -225,6 +336,9 @@ export default function CreatePage() {
     setUploadingKind(kind);
     try {
       const durations = await Promise.all(files.map(mediaDuration));
+      const effectiveDurations = kind === "video"
+        ? durations.map((value) => value === null ? null : Math.min(value, videoTailSeconds))
+        : durations;
       if (kind !== "image") {
         const tooShort = durations.find((value) => value !== null && value < 1.8);
         if (tooShort !== undefined) {
@@ -235,7 +349,7 @@ export default function CreatePage() {
           (total, item) => total + (item.durationSeconds ?? 0),
           0,
         );
-        const addedDuration = durations.reduce<number>((total, value) => total + (value ?? 0), 0);
+        const addedDuration = effectiveDurations.reduce<number>((total, value) => total + (value ?? 0), 0);
         if (currentDuration + addedDuration > 15) {
           setError(
             `参考${kind === "video" ? "视频" : "音频"}总时长最多 15 秒，当前选择后为 ${seconds(currentDuration + addedDuration)} 秒`,
@@ -243,7 +357,10 @@ export default function CreatePage() {
           return;
         }
       }
-      const uploaded = await uploadFiles(files, kind, durations);
+      const rawUploaded = await uploadFiles(files, kind, durations);
+      const uploaded = kind === "video"
+        ? await Promise.all(rawUploaded.map(trimVideoIfNeeded))
+        : rawUploaded;
       setRefAssets((items) => [...items, ...uploaded]);
     } catch (reason) {
       setError(reason instanceof ApiError ? reason.message : "参考素材上传失败，请检查文件格式");
@@ -293,13 +410,28 @@ export default function CreatePage() {
       const chosen = pickerSelection
         .map((id) => byId.get(id))
         .filter((asset): asset is Asset => Boolean(asset));
-      const selected = await Promise.all(
+      let selected = await Promise.all(
         chosen.map(async (asset) => ({
           asset,
           previewUrl: contentUrl(asset),
           durationSeconds: await mediaDurationFromUrl(contentUrl(asset), asset.kind),
         })),
       );
+      if (pickerTarget.kind === "video") {
+        const currentDuration = refVideos.reduce(
+          (total, item) => total + (item.durationSeconds ?? 0),
+          0,
+        );
+        const selectedDuration = selected.reduce(
+          (total, item) => total + Math.min(item.durationSeconds ?? 0, videoTailSeconds),
+          0,
+        );
+        if (pickerTarget.scope === "ref" && currentDuration + selectedDuration > 15) {
+          setPickerError(`参考视频总时长最多 15 秒，当前选择后为 ${seconds(currentDuration + selectedDuration)} 秒`);
+          return;
+        }
+        selected = await Promise.all(selected.map(trimVideoIfNeeded));
+      }
 
       if (pickerTarget.scope === "fl2va") {
         if (fl2vaAssets.length + selected.length > 2) {
@@ -499,6 +631,20 @@ export default function CreatePage() {
                     >
                       <FolderOpen className="size-4 text-violet-500" />从素材库选择
                     </button>
+                    {kind === "video" && (
+                      <label className="flex items-center justify-between rounded-xl bg-sky-50 px-3 py-2 text-xs text-sky-700">
+                        超过时截取末尾
+                        <select
+                          className="rounded-lg border border-sky-200 bg-white px-2 py-1 font-medium outline-none"
+                          value={videoTailSeconds}
+                          onChange={(event) => setVideoTailSeconds(Number(event.target.value) as TailSeconds)}
+                        >
+                          <option value={5}>5 秒</option>
+                          <option value={10}>10 秒</option>
+                          <option value={15}>15 秒</option>
+                        </select>
+                      </label>
+                    )}
                   </div>
                 ))}
               </div>

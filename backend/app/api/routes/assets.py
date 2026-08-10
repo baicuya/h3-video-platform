@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 from typing import Annotated
 
@@ -13,7 +14,8 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.asset import Asset
 from app.models.user import User
-from app.schemas.asset import AssetListResponse, AssetResponse
+from app.schemas.asset import AssetListResponse, AssetResponse, AssetVideoTrimRequest
+from app.services.media import media_duration_seconds, trim_video_tail
 from app.services.storage import LocalStorageProvider
 
 
@@ -141,6 +143,63 @@ async def preview_asset(
         content_disposition_type="inline",
         headers={"Cache-Control": "private, max-age=3600"},
     )
+
+
+@router.post("/{asset_id}/trim-tail", response_model=AssetResponse, status_code=201)
+async def trim_asset_tail(
+    asset_id: str,
+    payload: AssetVideoTrimRequest,
+    user: Annotated[User, Depends(require_password_changed)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Asset:
+    asset = await db.get(Asset, asset_id)
+    if asset is None or asset.user_id != user.id:
+        raise HTTPException(status_code=404, detail="素材不存在")
+    if asset.kind != "video":
+        raise HTTPException(status_code=422, detail="只能裁剪视频素材")
+
+    source = storage.absolute_path(asset.storage_path)
+    if not source.is_file():
+        raise HTTPException(status_code=404, detail="素材文件不存在")
+    try:
+        source_duration = await media_duration_seconds(source)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if source_duration <= payload.duration_seconds:
+        return asset
+
+    relative = Path("uploads") / "video" / f"{uuid.uuid4().hex}.mp4"
+    destination = storage.absolute_path(str(relative))
+    try:
+        output_duration = await trim_video_tail(
+            source,
+            destination,
+            payload.duration_seconds,
+            source_duration=source_duration,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if output_duration > payload.duration_seconds + 0.1:
+        destination.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail="裁剪后视频时长异常")
+
+    stem = Path(asset.original_name).stem[:220] or "video"
+    clipped = Asset(
+        user_id=user.id,
+        kind="video",
+        original_name=f"{stem}_末尾{payload.duration_seconds}秒.mp4",
+        storage_path=str(relative),
+        mime_type="video/mp4",
+        size_bytes=destination.stat().st_size,
+    )
+    db.add(clipped)
+    try:
+        await db.commit()
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    await db.refresh(clipped)
+    return clipped
 
 
 @router.delete("/{asset_id}", status_code=204)
