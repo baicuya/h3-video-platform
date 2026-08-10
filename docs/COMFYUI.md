@@ -5,11 +5,18 @@
 - ComfyUI：0.30.0，Git `0ab8332bfa41c695b1c104a6535ff1fde81c7939`
 - workflow templates：0.11.31
 - PyTorch：2.13.0+cu130
+- SageAttention：2.2.0，Git `eb615cf6cf4d221338033340ee2de1c37fbdba4a`，针对 Blackwell `sm_120` 编译
 - 模型仓库：`Comfy-Org/MiniMax-H3`
 - 模型 revision：`93acf8c91365d40dc32a3abd19af06df6b6f7c65`
 - ComfyUI：`127.0.0.1:8188`，禁止公网直连
 
 模型只保存在 `/home/ubuntu/models/minimax-h3`，通过 `/home/ubuntu/ComfyUI/extra_model_paths.yaml` 引用。
+
+## 生产加速配置
+
+- ComfyUI 使用 `--gpu-only --use-sage-attention` 启动；本机 98 GB VRAM 足以让单任务模型常驻 GPU。
+- T2V、I2V、Ref2VA 的 INT8 工作流保持 eager 执行；不要接入 `TorchCompileModel`，否则 `comfy_kitchen` 的 INT8 CUDA 算子会在 Dynamo FakeTensor 跟踪期间调用 `__dlpack__` 并失败。
+- SageAttention 依赖 CUDA 13.0 编译器及 cuBLAS、cuSPARSE、cuSOLVER 开发库。升级 PyTorch、CUDA 或 GPU 架构后必须重新编译该扩展。
 
 ## 模型校验
 
@@ -69,4 +76,3 @@ backend/.venv/bin/python scripts/test_comfyui_t2v.py
 backend/.venv/bin/python scripts/test_comfyui_i2v.py /path/to/image.png
 backend/.venv/bin/python scripts/test_comfyui_ref2va.py /path/to/image.png
 ```
-

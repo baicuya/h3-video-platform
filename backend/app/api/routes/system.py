@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 from typing import Annotated, Any
 
@@ -16,9 +17,67 @@ from app.core.database import get_db
 from app.core.redis import get_redis
 from app.models.user import User
 from app.models.video_job import VideoJob
+from app.services.workflows import ASPECT_DIMENSIONS
 
 
 router = APIRouter(tags=["system"])
+
+
+def _read_cpu_times() -> tuple[int, int]:
+    with open("/proc/stat", encoding="utf-8") as proc_stat:
+        fields = proc_stat.readline().split()[1:]
+    times = [int(value) for value in fields]
+    idle = times[3] + (times[4] if len(times) > 4 else 0)
+    return sum(times), idle
+
+
+def _read_memory_status() -> dict[str, int | float]:
+    values: dict[str, int] = {}
+    with open("/proc/meminfo", encoding="utf-8") as meminfo:
+        for line in meminfo:
+            key, raw_value = line.split(":", 1)
+            value = raw_value.strip().split()[0]
+            values[key] = int(value) * 1024
+
+    total = values["MemTotal"]
+    available = values["MemAvailable"]
+    used = total - available
+    return {
+        "total": total,
+        "used": used,
+        "available": available,
+        "utilization_percent": round(used / total * 100, 1) if total else 0.0,
+    }
+
+
+async def _system_resources() -> dict[str, Any]:
+    total_before, idle_before = _read_cpu_times()
+    await asyncio.sleep(0.1)
+    total_after, idle_after = _read_cpu_times()
+    total_delta = total_after - total_before
+    idle_delta = idle_after - idle_before
+    cpu_percent = (
+        round(max(0.0, min(100.0, (total_delta - idle_delta) / total_delta * 100)), 1)
+        if total_delta > 0
+        else 0.0
+    )
+
+    usage = shutil.disk_usage(get_settings().storage_root.parent)
+    return {
+        "cpu": {
+            "utilization_percent": cpu_percent,
+            "logical_cores": os.cpu_count() or 1,
+        },
+        "memory": _read_memory_status(),
+        "disk": {
+            "total": usage.total,
+            "used": usage.used,
+            "free": usage.free,
+            "utilization_percent": round(usage.used / usage.total * 100, 1)
+            if usage.total
+            else 0.0,
+        },
+    }
 
 
 @router.get("/health")
@@ -77,7 +136,7 @@ async def gpu_status(
     current_job = await db.scalar(
         select(VideoJob.id).where(VideoJob.status.in_(["preparing", "running", "encoding"]))
     )
-    usage = shutil.disk_usage(get_settings().storage_root.parent)
+    resources = await _system_resources()
     return {
         "name": fields[0] if len(fields) > 0 else "unknown",
         "vram_used_mb": int(fields[1]) if len(fields) > 1 else None,
@@ -86,11 +145,7 @@ async def gpu_status(
         "temperature_c": int(fields[4]) if len(fields) > 4 else None,
         "current_job": current_job,
         "queue_length": int(await redis.llen("h3:video_jobs")),
-        "disk": {
-            "total": usage.total,
-            "used": usage.used,
-            "free": usage.free,
-        },
+        **resources,
     }
 
 
@@ -104,12 +159,66 @@ async def comfyui_status(
 @router.get("/system/queue")
 async def queue_status(
     _: Annotated[User, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_db)],
     redis: Annotated[Redis, Depends(get_redis)],
 ) -> dict[str, Any]:
+    pending_length = int(await redis.llen("h3:video_jobs"))
+    pending_ids = await redis.lrange("h3:video_jobs", 0, 99)
+    active_ids = list(
+        (
+            await db.scalars(
+                select(VideoJob.id)
+                .where(VideoJob.status.in_(["preparing", "running", "encoding"]))
+                .order_by(VideoJob.started_at.asc(), VideoJob.created_at.asc())
+            )
+        ).all()
+    )
+    ordered_ids = list(dict.fromkeys([*active_ids, *pending_ids]))
+    jobs_by_id: dict[str, tuple[VideoJob, User]] = {}
+    if ordered_ids:
+        rows = (
+            await db.execute(
+                select(VideoJob, User)
+                .join(User, User.id == VideoJob.user_id)
+                .where(VideoJob.id.in_(ordered_ids))
+            )
+        ).all()
+        jobs_by_id = {job.id: (job, owner) for job, owner in rows}
+
+    position_by_id = {job_id: index for index, job_id in enumerate(pending_ids, start=1)}
+    jobs = []
+    for job_id in ordered_ids:
+        row = jobs_by_id.get(job_id)
+        if row is None:
+            continue
+        job, owner = row
+        width, height = ASPECT_DIMENSIONS.get(
+            (job.aspect_ratio, job.resolution),
+            ASPECT_DIMENSIONS.get((job.aspect_ratio, "480p"), (864, 480)),
+        )
+        jobs.append(
+            {
+                "id": job.id,
+                "status": job.status,
+                "queue_position": position_by_id.get(job.id),
+                "mode": job.mode,
+                "duration_seconds": job.duration_seconds,
+                "aspect_ratio": job.aspect_ratio,
+                "resolution": job.resolution,
+                "width": width,
+                "height": height,
+                "created_at": job.created_at,
+                "started_at": job.started_at,
+                "user_id": owner.id,
+                "username": owner.username,
+                "display_name": owner.display_name,
+                "user_role": owner.role,
+            }
+        )
     return {
         "paused": bool(await redis.get("h3:queue:paused")),
-        "length": int(await redis.llen("h3:video_jobs")),
-        "jobs": await redis.lrange("h3:video_jobs", 0, 99),
+        "length": pending_length,
+        "jobs": jobs,
     }
 
 

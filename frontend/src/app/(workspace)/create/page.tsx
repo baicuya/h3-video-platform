@@ -3,9 +3,11 @@
 import { ChangeEvent, Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import {
+  Check,
   ChevronDown,
   FileAudio,
   FileVideo,
+  FolderOpen,
   ImagePlus,
   LoaderCircle,
   Sparkles,
@@ -14,6 +16,7 @@ import {
 import { JobCard } from "@/components/job-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { api, ApiError } from "@/lib/api";
 import type { Asset, PageResult, VideoJob } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -25,6 +28,7 @@ type SelectedAsset = {
   previewUrl: string;
   durationSeconds: number | null;
 };
+type PickerTarget = { scope: "fl2va" | "ref"; kind: AssetKind };
 
 const modes = [
   { id: "t2v", title: "文生视频 T2VA", description: "只需一段描述，从零生成画面与声音" },
@@ -45,20 +49,30 @@ function seconds(value: number) {
 async function mediaDuration(file: File): Promise<number | null> {
   if (file.type.startsWith("image/")) return null;
   const url = URL.createObjectURL(file);
-  const media = document.createElement(file.type.startsWith("video/") ? "video" : "audio");
-  media.preload = "metadata";
+  const kind = file.type.startsWith("video/") ? "video" : "audio";
   try {
-    return await new Promise<number>((resolve, reject) => {
-      media.onloadedmetadata = () => {
-        if (Number.isFinite(media.duration) && media.duration > 0) resolve(media.duration);
-        else reject(new Error("duration"));
-      };
-      media.onerror = () => reject(new Error("duration"));
-      media.src = url;
-    });
+    return await mediaDurationFromUrl(url, kind);
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+async function mediaDurationFromUrl(url: string, kind: AssetKind): Promise<number | null> {
+  if (kind === "image") return null;
+  const media = document.createElement(kind === "video" ? "video" : "audio");
+  media.preload = "metadata";
+  return new Promise<number>((resolve, reject) => {
+    media.onloadedmetadata = () => {
+      if (Number.isFinite(media.duration) && media.duration > 0) resolve(media.duration);
+      else reject(new Error("duration"));
+    };
+    media.onerror = () => reject(new Error("duration"));
+    media.src = url;
+  });
+}
+
+function contentUrl(asset: Asset) {
+  return `/api/v1/assets/${asset.id}/content`;
 }
 
 function MaterialCard({
@@ -112,6 +126,12 @@ export default function CreatePage() {
   const [fl2vaAssets, setFl2vaAssets] = useState<SelectedAsset[]>([]);
   const [refAssets, setRefAssets] = useState<SelectedAsset[]>([]);
   const [uploadingKind, setUploadingKind] = useState<AssetKind | null>(null);
+  const [pickerTarget, setPickerTarget] = useState<PickerTarget | null>(null);
+  const [libraryAssets, setLibraryAssets] = useState<Asset[]>([]);
+  const [pickerSelection, setPickerSelection] = useState<string[]>([]);
+  const [pickerError, setPickerError] = useState("");
+  const [loadingLibrary, setLoadingLibrary] = useState(false);
+  const [addingLibrary, setAddingLibrary] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [jobs, setJobs] = useState<VideoJob[]>([]);
@@ -121,6 +141,13 @@ export default function CreatePage() {
   const refAudios = refAssets.filter((item) => item.asset.kind === "audio");
   const videoDuration = refVideos.reduce((total, item) => total + (item.durationSeconds ?? 0), 0);
   const audioDuration = refAudios.reduce((total, item) => total + (item.durationSeconds ?? 0), 0);
+  const pickerItems = pickerTarget
+    ? libraryAssets.filter((asset) => {
+        const current = pickerTarget.scope === "fl2va" ? fl2vaAssets : refAssets;
+        return asset.kind === pickerTarget.kind
+          && !current.some((item) => item.asset.id === asset.id);
+      })
+    : [];
 
   const loadJobs = useCallback(async () => {
     try {
@@ -225,6 +252,91 @@ export default function CreatePage() {
     }
   }
 
+  async function openLibrary(target: PickerTarget) {
+    setError("");
+    setPickerTarget(target);
+    setPickerSelection([]);
+    setPickerError("");
+    setLoadingLibrary(true);
+    try {
+      const result = await api<{ items: Asset[] }>("/assets");
+      setLibraryAssets(result.items);
+    } catch (reason) {
+      setPickerTarget(null);
+      setError(reason instanceof ApiError ? reason.message : "素材库加载失败");
+    } finally {
+      setLoadingLibrary(false);
+    }
+  }
+
+  function pickerCapacity(target: PickerTarget) {
+    if (target.scope === "fl2va") return Math.max(0, 2 - fl2vaAssets.length);
+    const sameKind = refAssets.filter((item) => item.asset.kind === target.kind).length;
+    return Math.max(0, Math.min(limits[target.kind].count - sameKind, 12 - refAssets.length));
+  }
+
+  function toggleLibraryAsset(assetId: string) {
+    if (!pickerTarget) return;
+    setPickerSelection((selected) => {
+      if (selected.includes(assetId)) return selected.filter((id) => id !== assetId);
+      if (selected.length >= pickerCapacity(pickerTarget)) return selected;
+      return [...selected, assetId];
+    });
+  }
+
+  async function addLibraryAssets() {
+    if (!pickerTarget || !pickerSelection.length) return;
+    setPickerError("");
+    setAddingLibrary(true);
+    try {
+      const byId = new Map(libraryAssets.map((asset) => [asset.id, asset]));
+      const chosen = pickerSelection
+        .map((id) => byId.get(id))
+        .filter((asset): asset is Asset => Boolean(asset));
+      const selected = await Promise.all(
+        chosen.map(async (asset) => ({
+          asset,
+          previewUrl: contentUrl(asset),
+          durationSeconds: await mediaDurationFromUrl(contentUrl(asset), asset.kind),
+        })),
+      );
+
+      if (pickerTarget.scope === "fl2va") {
+        if (fl2vaAssets.length + selected.length > 2) {
+          setPickerError("首尾帧最多选择两张图片");
+          return;
+        }
+        setFl2vaAssets((current) => [...current, ...selected]);
+      } else {
+        const kind = pickerTarget.kind;
+        const current = refAssets.filter((item) => item.asset.kind === kind);
+        if (current.length + selected.length > limits[kind].count || refAssets.length + selected.length > 12) {
+          setPickerError("所选素材超过当前模式的数量限制");
+          return;
+        }
+        if (kind !== "image") {
+          if (selected.some((item) => item.durationSeconds !== null && item.durationSeconds < 1.8)) {
+            setPickerError(`参考${kind === "video" ? "视频" : "音频"}不能短于 2 秒`);
+            return;
+          }
+          const currentDuration = current.reduce((total, item) => total + (item.durationSeconds ?? 0), 0);
+          const addedDuration = selected.reduce((total, item) => total + (item.durationSeconds ?? 0), 0);
+          if (currentDuration + addedDuration > 15) {
+            setPickerError(`参考${kind === "video" ? "视频" : "音频"}总时长最多 15 秒，当前选择后为 ${seconds(currentDuration + addedDuration)} 秒`);
+            return;
+          }
+        }
+        setRefAssets((currentAssets) => [...currentAssets, ...selected]);
+      }
+      setPickerTarget(null);
+      setPickerSelection([]);
+    } catch {
+      setPickerError("无法读取所选视频或音频的时长，请检查素材文件");
+    } finally {
+      setAddingLibrary(false);
+    }
+  }
+
   function removeSelected(
     item: SelectedAsset,
     setter: Dispatch<SetStateAction<SelectedAsset[]>>,
@@ -326,18 +438,28 @@ export default function CreatePage() {
                 </div>
               )}
               {fl2vaAssets.length < 2 && (
-                <label className="flex cursor-pointer items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-6 text-sm text-slate-500 transition hover:border-violet-300 hover:bg-violet-50">
-                  {uploadingKind === "image" ? <LoaderCircle className="size-5 animate-spin" /> : <ImagePlus className="size-5" />}
-                  {uploadingKind === "image" ? "正在上传…" : fl2vaAssets.length ? "上传可选尾帧" : "上传首帧，可同时选择首帧和尾帧"}
-                  <input
-                    className="sr-only"
-                    type="file"
-                    accept=".jpg,.jpeg,.png,.webp"
-                    multiple
-                    onChange={uploadFl2va}
-                    disabled={uploadingKind !== null}
-                  />
-                </label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="flex cursor-pointer items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-6 text-sm text-slate-500 transition hover:border-violet-300 hover:bg-violet-50">
+                    {uploadingKind === "image" ? <LoaderCircle className="size-5 animate-spin" /> : <ImagePlus className="size-5" />}
+                    {uploadingKind === "image" ? "正在上传…" : fl2vaAssets.length ? "上传可选尾帧" : "上传首帧或首尾帧"}
+                    <input
+                      className="sr-only"
+                      type="file"
+                      accept=".jpg,.jpeg,.png,.webp"
+                      multiple
+                      onChange={uploadFl2va}
+                      disabled={uploadingKind !== null}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void openLibrary({ scope: "fl2va", kind: "image" })}
+                    className="flex items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-6 text-sm text-slate-600 transition hover:border-violet-300 hover:bg-violet-50"
+                  >
+                    <FolderOpen className="size-5 text-violet-500" />
+                    从素材库选择
+                  </button>
+                </div>
               )}
             </section>
           )}
@@ -357,18 +479,27 @@ export default function CreatePage() {
                   ["video", "上传动作视频", ".mp4,.mov,.webm", FileVideo],
                   ["audio", "上传声音音频", ".wav,.mp3,.m4a,.flac", FileAudio],
                 ] as const).map(([kind, label, accept, Icon]) => (
-                  <label key={kind} className="flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-500 transition hover:border-violet-300 hover:bg-violet-50">
-                    {uploadingKind === kind ? <LoaderCircle className="size-5 animate-spin" /> : <Icon className="size-5" />}
-                    {uploadingKind === kind ? "正在上传…" : label}
-                    <input
-                      className="sr-only"
-                      type="file"
-                      accept={accept}
-                      multiple
-                      onChange={(event) => void uploadReferences(kind, event)}
-                      disabled={uploadingKind !== null}
-                    />
-                  </label>
+                  <div key={kind} className="space-y-2">
+                    <label className="flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-500 transition hover:border-violet-300 hover:bg-violet-50">
+                      {uploadingKind === kind ? <LoaderCircle className="size-5 animate-spin" /> : <Icon className="size-5" />}
+                      {uploadingKind === kind ? "正在上传…" : label}
+                      <input
+                        className="sr-only"
+                        type="file"
+                        accept={accept}
+                        multiple
+                        onChange={(event) => void uploadReferences(kind, event)}
+                        disabled={uploadingKind !== null}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void openLibrary({ scope: "ref", kind })}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium text-slate-600 transition hover:border-violet-300 hover:bg-violet-50"
+                    >
+                      <FolderOpen className="size-4 text-violet-500" />从素材库选择
+                    </button>
+                  </div>
                 ))}
               </div>
 
@@ -461,6 +592,84 @@ export default function CreatePage() {
           <div className="rounded-2xl border border-dashed border-slate-300 bg-white/55 py-16 text-center text-sm text-slate-400">还没有生成记录，提交第一个创意吧。</div>
         )}
       </section>
+
+      <Dialog
+        open={Boolean(pickerTarget)}
+        onOpenChange={(open) => {
+          if (!open && !addingLibrary) {
+            setPickerTarget(null);
+            setPickerSelection([]);
+            setPickerError("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>从素材库选择</DialogTitle>
+            <DialogDescription>
+              {pickerTarget?.kind === "image" ? "选择图片素材" : pickerTarget?.kind === "video" ? "选择视频素材" : "选择音频素材"}
+              {pickerTarget ? `，本次还可选择 ${pickerCapacity(pickerTarget)} 个` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {loadingLibrary ? (
+            <div className="flex min-h-56 items-center justify-center gap-2 text-sm text-slate-400">
+              <LoaderCircle className="size-5 animate-spin" />正在加载素材库…
+            </div>
+          ) : pickerItems.length ? (
+            <div className="grid max-h-[58vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
+              {pickerItems.map((asset) => {
+                const selected = pickerSelection.includes(asset.id);
+                const atCapacity = pickerTarget
+                  ? pickerSelection.length >= pickerCapacity(pickerTarget)
+                  : false;
+                return (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    disabled={!selected && atCapacity}
+                    onClick={() => toggleLibraryAsset(asset.id)}
+                    className={cn(
+                      "overflow-hidden rounded-2xl border bg-white text-left transition",
+                      selected ? "border-violet-500 ring-2 ring-violet-100" : "border-slate-200 hover:border-violet-300",
+                      !selected && atCapacity && "cursor-not-allowed opacity-45",
+                    )}
+                  >
+                    <div className="relative flex aspect-video items-center justify-center overflow-hidden bg-slate-100">
+                      {asset.kind === "image" ? (
+                        <Image src={contentUrl(asset)} alt={asset.original_name} fill unoptimized className="object-cover" />
+                      ) : asset.kind === "video" ? (
+                        <FileVideo className="size-10 text-sky-500" />
+                      ) : (
+                        <FileAudio className="size-10 text-amber-500" />
+                      )}
+                      {selected && <span className="absolute right-2 top-2 grid size-7 place-items-center rounded-full bg-violet-600 text-white shadow"><Check className="size-4" /></span>}
+                    </div>
+                    <div className="p-3">
+                      <p className="truncate text-sm font-medium text-slate-800" title={asset.original_name}>{asset.original_name}</p>
+                      <p className="mt-1 text-xs text-slate-400">{(asset.size_bytes / 1024 / 1024).toFixed(2)} MB</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-slate-200 py-14 text-center text-sm text-slate-400">
+              素材库中没有可选的此类素材，请先上传素材。
+            </div>
+          )}
+          {pickerError && <p className="mt-4 rounded-xl bg-rose-50 px-3.5 py-3 text-sm text-rose-700">{pickerError}</p>}
+          <div className="mt-5 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
+            <p className="text-xs text-slate-400">已选择 {pickerSelection.length} 个</p>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={() => { setPickerTarget(null); setPickerSelection([]); setPickerError(""); }} disabled={addingLibrary}>取消</Button>
+              <Button type="button" variant="accent" onClick={() => void addLibraryAssets()} disabled={!pickerSelection.length || addingLibrary}>
+                {addingLibrary && <LoaderCircle className="size-4 animate-spin" />}
+                {addingLibrary ? "正在读取素材…" : "添加所选素材"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

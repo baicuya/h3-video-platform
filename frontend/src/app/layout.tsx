@@ -7,6 +7,10 @@ export const metadata: Metadata = {
     template: "%s · 锦宿 AI 视频工作台",
   },
   description: "锦宿内部 AI 视频生成平台",
+  icons: {
+    icon: "/brand/jinxiu-logo-black.jpg",
+    apple: "/brand/jinxiu-logo-black.jpg",
+  },
   robots: { index: false, follow: false },
 };
 

@@ -8,7 +8,7 @@ Type=simple
 User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/ComfyUI
-ExecStart=/home/ubuntu/ComfyUI/.venv/bin/python main.py --listen 127.0.0.1 --port 8188 --disable-auto-launch
+ExecStart=/home/ubuntu/ComfyUI/.venv/bin/python main.py --listen 127.0.0.1 --port 8188 --disable-auto-launch --gpu-only --use-sage-attention
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=45
@@ -16,4 +16,3 @@ KillSignal=SIGINT
 
 [Install]
 WantedBy=multi-user.target
-

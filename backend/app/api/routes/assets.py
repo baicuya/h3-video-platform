@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -119,6 +120,27 @@ async def list_assets(
         )
     ).all()
     return AssetListResponse(items=list(assets), total=len(assets))
+
+
+@router.get("/{asset_id}/content", response_class=FileResponse)
+async def preview_asset(
+    asset_id: str,
+    user: Annotated[User, Depends(require_password_changed)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> FileResponse:
+    asset = await db.get(Asset, asset_id)
+    if asset is None or (asset.user_id != user.id and user.role != "admin"):
+        raise HTTPException(status_code=404, detail="素材不存在")
+    path = storage.absolute_path(asset.storage_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="素材文件不存在")
+    return FileResponse(
+        path,
+        media_type=asset.mime_type,
+        filename=asset.original_name,
+        content_disposition_type="inline",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
 
 
 @router.delete("/{asset_id}", status_code=204)
