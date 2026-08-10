@@ -27,12 +27,12 @@
 |---|---|---|---|
 | 文生视频 | 已开放、真实通过 | `h3_t2v_int8.json` | FL2VA INT8，原生视频+立体声音频 |
 | 图生视频首帧 | 已开放、真实通过 | `h3_i2v_int8.json` | 动态上传到 LoadImage |
-| Ref2VA 单参考图 | 已开放、真实通过 | `h3_ref2va_int8.json` | 使用 `<Picture 1>` 标签 |
+| Ref2VA 多素材 | 已开放 | `h3_ref2va_int8.json` | 最多 9 图、3 视频、3 音频，总素材最多 12 个 |
 | Ref2VA 多参考图 | 未开放 | 官方节点支持 | 尚未独立做端到端产品验收 |
 | Ref2VA 参考视频 | 未开放 | 官方节点支持 | 页面隐藏，不伪实现 |
 | Ref2VA 参考音频 | 未开放 | 官方节点支持 | 页面隐藏，不伪实现 |
 
-官方本地节点最多接受 9 张参考图、3 段参考视频和 3 段独立音频；当前产品只开放已经真实生成验证的单图路径。
+官方本地节点接受最多 9 张参考图、3 段参考视频和 3 段独立音频。平台按同类型顺序映射为 `<Picture N>`、`<Video N>`、`<Audio N>`；参考视频和参考音频各自总时长最多 15 秒，图片、视频、音频合计最多 12 个。
 
 ## 真实验收
 
@@ -40,12 +40,14 @@
 - I2V：prompt `b0d357a5-0b08-4372-840c-efc3ebbb6c4e`，30.50 秒
 - Phase 4 API T2V：`2ae85d69-6153-4a07-b546-1a907add3e40`
 - Phase 4 API I2V：`6e7dac24-cbb6-4789-bb7e-c30be1fae542`
-- Ref2VA 单图：`3ce227de-8531-4cdb-ac8f-69474321d282`，冷启动 181.80 秒
+- Ref2VA 单图（多素材链路以自动化请求图测试覆盖，尚未做真实 GPU 混合素材验收）：`3ce227de-8531-4cdb-ac8f-69474321d282`，冷启动 181.80 秒
 - 公网平台端到端 Ref2VA：任务 `47fbbf8f-b228-48ce-bbe7-438fdccecc39`，ComfyUI prompt `528b95a1-227a-46ff-b63d-619a4bf7e3f4`
 
 Ref2VA 输出经 `ffprobe`：H.264 608×352 24fps、AAC 32kHz 双声道、5.167 秒。
 
 ## 工作流参数化
+
+当前生产链路不调用 `/v1/videos` 或 SGLang；后端上传素材到本机 ComfyUI `/upload/image`，然后向 `/prompt` 提交 prompt graph。云端 Hailuo H3 的请求 schema 仅作为字段语义对照，不混入本地工作流。
 
 `WorkflowService` 每次深复制 JSON，根据固定 node map 写入 prompt、尺寸、帧数、seed、steps、输出前缀和已上传图片名。后端会先确认关键节点存在；不会用字符串全局替换，也不接受用户提交任意 workflow。
 

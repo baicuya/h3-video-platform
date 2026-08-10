@@ -18,7 +18,7 @@ class VideoJobCreate(BaseModel):
     steps: int = 20
     flow_shift: float | None = None
     audio_flow_shift: float | None = None
-    asset_ids: list[str] = Field(default_factory=list, max_length=16)
+    asset_ids: list[str] = Field(default_factory=list)
 
     @field_validator("mode")
     @classmethod

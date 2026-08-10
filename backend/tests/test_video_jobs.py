@@ -2,10 +2,35 @@ from __future__ import annotations
 
 import pytest
 
+from app.api.routes import video_jobs as video_jobs_route
 from app.models.asset import Asset
 
 from .conftest import TestSession
 from .helpers import create_user, login
+
+
+async def create_assets(user_id: str, specs: list[tuple[str, str]]) -> list[str]:
+    async with TestSession() as db:
+        assets = [
+            Asset(
+                user_id=user_id,
+                kind=kind,
+                original_name=name,
+                storage_path=f"uploads/{user_id}/{index}-{name}",
+                mime_type={
+                    "image": "image/png",
+                    "video": "video/mp4",
+                    "audio": "audio/wav",
+                }[kind],
+                size_bytes=128,
+            )
+            for index, (kind, name) in enumerate(specs)
+        ]
+        db.add_all(assets)
+        await db.commit()
+        for asset in assets:
+            await db.refresh(asset)
+        return [asset.id for asset in assets]
 
 
 @pytest.mark.asyncio
@@ -51,7 +76,7 @@ async def test_create_query_cancel_and_invalid_mode(client):
 
 
 @pytest.mark.asyncio
-async def test_ref2va_requires_exactly_one_owned_image(client):
+async def test_ref2va_accepts_an_owned_image(client):
     user = await create_user(username="reference")
     assert (await login(client, "reference")).status_code == 200
     missing = await client.post(
@@ -86,6 +111,112 @@ async def test_ref2va_requires_exactly_one_owned_image(client):
     assert created.status_code == 201
     detail = await client.get(f"/api/v1/video-jobs/{created.json()['id']}")
     assert detail.json()["workflow_name"] == "h3_ref2va_int8.json"
+
+
+@pytest.mark.asyncio
+async def test_ref2va_mixed_assets_and_limits(client, monkeypatch):
+    user = await create_user(username="mixed-reference")
+    assert (await login(client, "mixed-reference")).status_code == 200
+
+    async def fake_duration(path):
+        name = str(path)
+        return 8.0 if name.endswith(".mp4") or "long-" in name else 4.5
+
+    monkeypatch.setattr(video_jobs_route, "media_duration_seconds", fake_duration)
+    asset_ids = await create_assets(
+        user.id,
+        [
+            ("image", "person.png"),
+            ("video", "motion.mp4"),
+            ("audio", "voice.wav"),
+        ],
+    )
+    created = await client.post(
+        "/api/v1/video-jobs",
+        json={
+            "mode": "ref2va",
+            "prompt": "Use <Picture 1>, <Video 1> and <Audio 1>",
+            "asset_ids": asset_ids,
+            "resolution": "480p",
+        },
+    )
+    assert created.status_code == 201
+    detail = await client.get(f"/api/v1/video-jobs/{created.json()['id']}")
+    assert detail.json()["input_assets"] == asset_ids
+
+    audio_only = await create_assets(user.id, [("audio", "only.wav")])
+    rejected_audio_only = await client.post(
+        "/api/v1/video-jobs",
+        json={"mode": "ref2va", "prompt": "Audio only", "asset_ids": audio_only},
+    )
+    assert rejected_audio_only.status_code == 422
+    assert "不能只上传音频" in rejected_audio_only.json()["detail"]
+
+    too_many_images = await create_assets(
+        user.id,
+        [("image", f"image-{index}.png") for index in range(10)],
+    )
+    rejected_images = await client.post(
+        "/api/v1/video-jobs",
+        json={"mode": "ref2va", "prompt": "Too many", "asset_ids": too_many_images},
+    )
+    assert rejected_images.status_code == 422
+    assert "最多上传 9 张" in rejected_images.json()["detail"]
+
+    too_long = await create_assets(
+        user.id,
+        [("image", "anchor.png"), ("video", "one.mp4"), ("video", "two.mp4")],
+    )
+    rejected_duration = await client.post(
+        "/api/v1/video-jobs",
+        json={"mode": "ref2va", "prompt": "Too long", "asset_ids": too_long},
+    )
+    assert rejected_duration.status_code == 422
+    assert "视频总时长最多 15 秒" in rejected_duration.json()["detail"]
+
+    too_long_audio = await create_assets(
+        user.id,
+        [("image", "speaker.png"), ("audio", "long-one.wav"), ("audio", "long-two.wav")],
+    )
+    rejected_audio_duration = await client.post(
+        "/api/v1/video-jobs",
+        json={"mode": "ref2va", "prompt": "Too long", "asset_ids": too_long_audio},
+    )
+    assert rejected_audio_duration.status_code == 422
+    assert "音频总时长最多 15 秒" in rejected_audio_duration.json()["detail"]
+
+    too_many_total = await create_assets(
+        user.id,
+        [
+            *[("image", f"total-image-{index}.png") for index in range(7)],
+            *[("video", f"total-video-{index}.mp4") for index in range(3)],
+            *[("audio", f"total-audio-{index}.wav") for index in range(3)],
+        ],
+    )
+    rejected_total = await client.post(
+        "/api/v1/video-jobs",
+        json={"mode": "ref2va", "prompt": "Too many total", "asset_ids": too_many_total},
+    )
+    assert rejected_total.status_code == 422
+    assert "总数最多 12 个" in rejected_total.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_fl2va_accepts_first_and_last_frame(client):
+    user = await create_user(username="first-last")
+    assert (await login(client, "first-last")).status_code == 200
+    asset_ids = await create_assets(
+        user.id,
+        [("image", "first.png"), ("image", "last.png")],
+    )
+    created = await client.post(
+        "/api/v1/video-jobs",
+        json={"mode": "i2v", "prompt": "First to last", "asset_ids": asset_ids},
+    )
+    assert created.status_code == 201
+    detail = await client.get(f"/api/v1/video-jobs/{created.json()['id']}")
+    assert detail.json()["input_assets"] == asset_ids
+    assert detail.json()["workflow_name"] == "h3_i2v_int8.json"
 
 
 @pytest.mark.asyncio

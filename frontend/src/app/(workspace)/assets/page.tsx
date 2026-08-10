@@ -39,7 +39,7 @@ export default function AssetsPage() {
   return (
     <div>
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div><h1 className="text-3xl font-semibold text-slate-950">素材</h1><p className="mt-2 text-sm text-slate-500">管理用于图生视频和全能参考的图片素材。</p></div>
+        <div><h1 className="text-3xl font-semibold text-slate-950">素材</h1><p className="mt-2 text-sm text-slate-500">管理用于首尾帧和全能参考的图片、视频与音频素材。</p></div>
         <Button asChild variant="accent"><label className="cursor-pointer"><Upload className="size-4" />上传素材<input className="sr-only" type="file" accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.webm,.wav,.mp3,.m4a,.flac" onChange={upload} /></label></Button>
       </div>
       {error && <p className="mt-5 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}

@@ -17,7 +17,7 @@ export function formatDate(value: string | null | undefined) {
 }
 
 export function modeLabel(mode: string) {
-  return { t2v: "文生视频", i2v: "图生视频", ref2va: "全能参考" }[mode] ?? mode;
+  return { t2v: "文生视频 T2VA", i2v: "首尾帧 FL2VA", ref2va: "全能参考 Ref2VA" }[mode] ?? mode;
 }
 
 export function statusLabel(status: string) {

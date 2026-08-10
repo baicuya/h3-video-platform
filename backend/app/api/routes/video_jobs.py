@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, time
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -22,6 +24,7 @@ from app.schemas.video_job import (
     VideoJobQueued,
     VideoJobResponse,
 )
+from app.services.storage import LocalStorageProvider
 from app.services.workflows import WorkflowService
 
 
@@ -37,24 +40,106 @@ async def owned_job(db: AsyncSession, user: User, job_id: str) -> VideoJob:
     return job
 
 
+async def media_duration_seconds(path: Path) -> float:
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        raise ValueError("无法启动 ffprobe 读取素材时长") from exc
+    try:
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=30)
+    except TimeoutError as exc:
+        process.kill()
+        await process.communicate()
+        raise ValueError("读取素材时长超时") from exc
+    try:
+        duration = float(stdout.decode().strip())
+    except ValueError as exc:
+        raise ValueError("无法读取素材时长") from exc
+    if process.returncode != 0 or duration <= 0:
+        raise ValueError("无法读取素材时长")
+    return duration
+
+
 async def validate_assets(
     db: AsyncSession, user: User, mode: str, asset_ids: list[str]
 ) -> None:
-    if mode in {"i2v", "ref2va"} and not asset_ids:
-        detail = "图生视频必须上传首帧图片" if mode == "i2v" else "全能参考必须上传一张参考图片"
-        raise HTTPException(status_code=422, detail=detail)
-    if mode == "ref2va" and len(asset_ids) != 1:
-        raise HTTPException(status_code=422, detail="当前全能参考仅支持一张参考图片")
-    if not asset_ids:
+    if len(asset_ids) != len(set(asset_ids)):
+        raise HTTPException(status_code=422, detail="不能重复选择同一素材")
+    if mode == "t2v":
+        if asset_ids:
+            raise HTTPException(status_code=422, detail="文生视频不需要参考素材")
         return
-    assets = (
-        await db.scalars(select(Asset).where(Asset.id.in_(asset_ids)))
-    ).all()
-    if len(assets) != len(set(asset_ids)) or any(asset.user_id != user.id for asset in assets):
-        raise HTTPException(status_code=422, detail="素材不存在或无权使用")
-    if mode in {"i2v", "ref2va"} and assets[0].kind != "image":
-        detail = "首帧必须是图片素材" if mode == "i2v" else "参考素材必须是图片"
+    if not asset_ids:
+        detail = "首尾帧至少需要上传首帧图片" if mode == "i2v" else "全能参考至少需要上传一张图片或一个视频"
         raise HTTPException(status_code=422, detail=detail)
+
+    rows = (await db.scalars(select(Asset).where(Asset.id.in_(asset_ids)))).all()
+    by_id = {asset.id: asset for asset in rows}
+    if len(by_id) != len(asset_ids) or any(
+        by_id[asset_id].user_id != user.id for asset_id in asset_ids
+    ):
+        raise HTTPException(status_code=422, detail="素材不存在或无权使用")
+    assets = [by_id[asset_id] for asset_id in asset_ids]
+
+    if mode == "i2v":
+        if len(assets) > 2:
+            raise HTTPException(status_code=422, detail="首尾帧最多上传两张图片")
+        if any(asset.kind != "image" for asset in assets):
+            raise HTTPException(status_code=422, detail="首帧和尾帧必须是图片素材")
+        return
+
+    counts = {
+        kind: sum(asset.kind == kind for asset in assets)
+        for kind in ("image", "video", "audio")
+    }
+    if len(assets) > 12:
+        raise HTTPException(status_code=422, detail="图片、视频和音频总数最多 12 个")
+    if counts["image"] > 9:
+        raise HTTPException(status_code=422, detail="参考图片最多上传 9 张")
+    if counts["video"] > 3:
+        raise HTTPException(status_code=422, detail="参考视频最多上传 3 个")
+    if counts["audio"] > 3:
+        raise HTTPException(status_code=422, detail="参考音频最多上传 3 个")
+    if not counts["image"] and not counts["video"]:
+        raise HTTPException(status_code=422, detail="全能参考至少需要一张图片或一个视频，不能只上传音频")
+
+    storage = LocalStorageProvider(get_settings().storage_root)
+    video_durations: list[float] = []
+    audio_durations: list[float] = []
+    for asset in assets:
+        if asset.kind not in {"video", "audio"}:
+            continue
+        try:
+            duration = await media_duration_seconds(storage.absolute_path(asset.storage_path))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail=f"无法读取素材“{asset.original_name}”的时长"
+            ) from exc
+        if duration < 1.8:
+            kind_label = "视频" if asset.kind == "video" else "音频"
+            raise HTTPException(
+                status_code=422,
+                detail=f"参考{kind_label}“{asset.original_name}”不能短于 2 秒",
+            )
+        (video_durations if asset.kind == "video" else audio_durations).append(duration)
+
+    video_total = sum(video_durations)
+    audio_total = sum(audio_durations)
+    if video_total > 15.0:
+        raise HTTPException(status_code=422, detail=f"参考视频总时长最多 15 秒，当前为 {video_total:.1f} 秒")
+    if audio_total > 15.0:
+        raise HTTPException(status_code=422, detail=f"参考音频总时长最多 15 秒，当前为 {audio_total:.1f} 秒")
 
 
 async def enqueue_job(

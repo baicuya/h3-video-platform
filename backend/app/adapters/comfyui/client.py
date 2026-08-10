@@ -25,7 +25,7 @@ class ComfyUIClient:
                 response.raise_for_status()
                 return await response.json()
 
-    async def upload_image(self, path: Path) -> str:
+    async def upload_input(self, path: Path) -> str:
         form = aiohttp.FormData()
         with path.open("rb") as handle:
             form.add_field(
@@ -44,6 +44,9 @@ class ComfyUIClient:
                     result = await response.json()
         subfolder = result.get("subfolder", "")
         return f"{subfolder}/{result['name']}" if subfolder else result["name"]
+
+    async def upload_image(self, path: Path) -> str:
+        return await self.upload_input(path)
 
     async def submit_workflow(self, workflow: dict[str, Any]) -> str:
         payload = {"prompt": workflow, "client_id": self.client_id}

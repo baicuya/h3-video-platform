@@ -59,7 +59,7 @@ export default function HistoryPage() {
           <option value="">全部状态</option><option value="queued">排队中</option><option value="running">生成中</option><option value="completed">已完成</option><option value="failed">失败</option><option value="cancelled">已取消</option>
         </select>
         <select className="h-11 rounded-xl border border-slate-200 bg-white px-3.5 text-sm text-slate-600 outline-none" value={mode} onChange={(e) => { setMode(e.target.value); setPage(1); }}>
-          <option value="">全部模式</option><option value="t2v">文生视频</option><option value="i2v">图生视频</option><option value="ref2va">全能参考</option>
+          <option value="">全部模式</option><option value="t2v">文生视频 T2VA</option><option value="i2v">首尾帧 FL2VA</option><option value="ref2va">全能参考 Ref2VA</option>
         </select>
       </div>
       <p className="mt-5 text-xs text-slate-400">共 {total} 条任务</p>

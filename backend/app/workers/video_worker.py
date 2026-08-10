@@ -78,16 +78,14 @@ async def process_job(job_id: str) -> None:
         job.started_at = datetime.now(UTC)
         await update_job(db, job, status="preparing", stage="准备素材")
         try:
-            comfy_image_name = None
-            if job.mode in {"i2v", "ref2va"}:
-                asset_id = job.input_assets[0]
+            comfy_assets: list[tuple[str, str]] = []
+            for asset_id in job.input_assets:
                 asset = await db.get(Asset, asset_id)
                 if asset is None:
-                    raise ValueError("INVALID_ASSET: input image is missing")
-                comfy_image_name = await client.upload_image(
-                    storage.absolute_path(asset.storage_path)
-                )
-            workflow = workflow_service.build(job, comfy_image_name)
+                    raise ValueError(f"INVALID_ASSET: input asset {asset_id} is missing")
+                comfy_name = await client.upload_input(storage.absolute_path(asset.storage_path))
+                comfy_assets.append((asset.kind, comfy_name))
+            workflow = workflow_service.build(job, comfy_assets)
             prompt_id = await client.submit_workflow(workflow)
             job.comfy_prompt_id = prompt_id
             await update_job(db, job, status="running", stage="生成中")

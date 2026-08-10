@@ -58,17 +58,29 @@
 {
   "mode": "ref2va",
   "model_variant": "int8",
-  "prompt": "Use <Picture 1> as the exact visual reference...",
+  "prompt": "Use <Picture 1>, <Video 1> and <Audio 1> as references...",
   "duration_seconds": 5,
   "aspect_ratio": "16:9",
   "resolution": "480p",
   "seed": -1,
   "steps": 20,
-  "asset_ids": ["image-asset-uuid"]
+  "asset_ids": [
+    "image-asset-uuid",
+    "video-asset-uuid",
+    "audio-asset-uuid"
+  ]
 }
 ```
 
-`model_variant` 仅支持 `int8`，省略时默认使用 `int8`。`t2v` 不需要素材；`i2v` 必须恰好使用首帧图片；当前 `ref2va` 只开放并强校验一张参考图片。任务数据和输出默认仅所有者可见，管理员可按后端授权规则查看详情。
+`model_variant` 仅支持 `int8`，省略时默认使用 `int8`。`t2v` 不需要素材；`i2v` 接受一张首帧和可选的一张尾帧，顺序为首帧、尾帧；`ref2va` 最多接受 9 张图片、3 个视频、3 个音频，全部素材合计最多 12 个。参考视频总时长和参考音频总时长分别不能超过 15 秒，单个视频或音频不能短于 2 秒，且不能只上传音频。前后端都会执行同样的限制校验。任务数据和输出默认仅所有者可见，管理员可按后端授权规则查看详情。
+
+Ref2VA 的 `asset_ids` 保留用户提交顺序，后端按素材类型映射到本机 ComfyUI prompt graph：
+
+- 图片：`LoadImage -> MiniMaxH3ReferenceToVideo.ref_images.ref_image_N`
+- 视频：`LoadVideo -> GetVideoComponents.images -> ref_videos.ref_video_N`
+- 独立音频：`LoadAudio -> ref_audios.ref_audio_N`
+
+项目当前不调用 `/v1/videos` 或 SGLang；实际生成请求发送到本机 ComfyUI `/prompt`。
 
 ## 系统
 
