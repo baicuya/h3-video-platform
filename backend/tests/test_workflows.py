@@ -3,8 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from app.models.video_job import VideoJob
+from app.schemas.video_job import VideoJobCreate
 from app.services.workflows import WorkflowService
 
 
@@ -123,3 +125,30 @@ def test_rejects_unexpected_workflow_name():
 
     with pytest.raises(ValueError, match="Unexpected workflow name"):
         WorkflowService(root=WORKFLOW_ROOT).build(job)
+
+
+@pytest.mark.parametrize(
+    ("duration_seconds", "expected_frames"),
+    [(1, 39), (5, 124), (8, 192), (10, 243), (15, 362)],
+)
+def test_duration_uses_h3_frame_grid(duration_seconds: int, expected_frames: int):
+    job = make_job("t2v")
+    job.duration_seconds = duration_seconds
+
+    workflow = WorkflowService(root=WORKFLOW_ROOT).build(job)
+
+    frames = workflow["5"]["inputs"]["length"]
+    assert frames == expected_frames
+    assert (frames - 5) % 17 == 0
+
+
+@pytest.mark.parametrize("duration_seconds", [1, 15])
+def test_duration_accepts_one_through_fifteen_seconds(duration_seconds: int):
+    payload = VideoJobCreate(mode="t2v", prompt="A calm lake", duration_seconds=duration_seconds)
+    assert payload.duration_seconds == duration_seconds
+
+
+@pytest.mark.parametrize("duration_seconds", [0, 16])
+def test_duration_rejects_values_outside_supported_range(duration_seconds: int):
+    with pytest.raises(ValidationError, match="时长必须在 1～15 秒之间"):
+        VideoJobCreate(mode="t2v", prompt="A calm lake", duration_seconds=duration_seconds)

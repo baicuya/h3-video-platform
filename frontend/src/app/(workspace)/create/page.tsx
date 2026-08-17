@@ -60,6 +60,8 @@ const generationProfiles = [
   { id: "quality", label: "高质量 20步", description: "原始模型完整采样，耗时最长" },
 ] as const;
 
+const generationDurations = Array.from({ length: 15 }, (_, index) => index + 1);
+
 const limits = {
   image: { count: 9, duration: null },
   video: { count: 3, duration: 15 },
@@ -68,6 +70,10 @@ const limits = {
 
 function seconds(value: number) {
   return value.toFixed(1).replace(/\.0$/, "");
+}
+
+function isGenerationDuration(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 15;
 }
 
 async function mediaDuration(file: File): Promise<number | null> {
@@ -211,7 +217,7 @@ export default function CreatePage() {
       const draft = JSON.parse(raw) as Partial<CreateDraft>;
       if (draft.mode && modes.some((item) => item.id === draft.mode)) setMode(draft.mode);
       if (typeof draft.prompt === "string") setPrompt(draft.prompt);
-      if ([5, 10, 15].includes(draft.duration ?? 0)) setDuration(draft.duration as number);
+      if (isGenerationDuration(draft.duration)) setDuration(draft.duration);
       if (["16:9", "9:16", "1:1", "4:3", "3:4"].includes(draft.aspectRatio ?? "")) setAspectRatio(draft.aspectRatio as string);
       if (["480p", "720p", "768p"].includes(draft.resolution ?? "")) setResolution(draft.resolution as string);
       if (typeof draft.seed === "number") setSeed(draft.seed);
@@ -701,7 +707,7 @@ export default function CreatePage() {
             <label className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
               时长
               <select className="ml-2 bg-transparent font-medium text-slate-800 outline-none" value={duration} onChange={(event) => setDuration(Number(event.target.value))}>
-                <option value={5}>5 秒</option><option value={10}>10 秒</option><option value={15}>15 秒</option>
+                {generationDurations.map((seconds) => <option key={seconds} value={seconds}>{seconds} 秒</option>)}
               </select>
             </label>
             <label className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
