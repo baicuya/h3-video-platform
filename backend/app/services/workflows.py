@@ -100,6 +100,10 @@ class WorkflowService:
     ) -> None:
         """Add H3's two-pass video-only latent upscale graph to a base template."""
         workflow["8"]["inputs"]["steps"] = H3_1080P_TOTAL_STEPS
+        # The LightX2V Turbo 8-step workflow is tuned for Euler + beta.  In a
+        # split pass beta reserves useful detail steps at the low-sigma end,
+        # avoiding the colourful speckle/bokeh artifacts seen with ``simple``.
+        workflow["8"]["inputs"]["scheduler"] = "beta"
         workflow["10"]["inputs"]["sigmas"] = ["20", 0]
         workflow.update(
             {
@@ -109,13 +113,13 @@ class WorkflowService:
                     "_meta": {"title": "Split H3 Turbo sigmas after first pass"},
                 },
                 "22": {
-                    "class_type": "MiniMaxH3VideoLatentUpscaleReNoise",
+                    "class_type": "MiniMaxH3VideoLatentUpscaleSigmaAlign",
                     "inputs": {
-                        "samples": ["10", 0], "model": ["900", 0], "noise": ["6", 0],
+                        "samples": ["10", 0], "model": ["900", 0],
                         "sigmas": ["20", 1], "width": model_width, "height": model_height,
                         "upscale_method": "bicubic",
                     },
-                    "_meta": {"title": "Upscale H3 video latent and re-noise video only"},
+                    "_meta": {"title": "Upscale H3 video latent and align second-pass sigma"},
                 },
                 "24": {
                     "class_type": "DisableNoise",

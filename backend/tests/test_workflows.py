@@ -117,9 +117,11 @@ def test_1080p_uses_target_renoise_and_target_conditioning(mode: str):
     workflow = WorkflowService(root=WORKFLOW_ROOT).build(job, assets)
 
     assert workflow["20"]["inputs"]["step"] == 2
-    assert workflow["22"]["class_type"] == "MiniMaxH3VideoLatentUpscaleReNoise"
+    assert workflow["8"]["inputs"]["scheduler"] == "beta"
+    assert workflow["8"]["inputs"]["steps"] == 8
+    assert workflow["22"]["class_type"] == "MiniMaxH3VideoLatentUpscaleSigmaAlign"
     assert workflow["22"]["inputs"]["samples"] == ["10", 0]
-    assert workflow["22"]["inputs"]["noise"] == ["6", 0]
+    assert "noise" not in workflow["22"]["inputs"]
     assert workflow["22"]["inputs"]["sigmas"] == ["20", 1]
     assert workflow["25"]["inputs"]["noise"] == ["24", 0]
     assert workflow["25"]["inputs"]["guider"] == ["28", 0]

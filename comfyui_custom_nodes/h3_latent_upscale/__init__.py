@@ -2,10 +2,11 @@
 
 H3 stores video and audio in a single nested latent. Generic ComfyUI latent
 upscalers assume an image VAE with an 8x spatial compression, while H3 video
-uses 16x.  The second H3 pass must *not* sample a directly interpolated
-latent: that creates correlated high-sigma noise (visible as colourful rings
-or grids after VAE decoding).  The combined node below upscales video only,
-re-noises it on the target grid at the pass-two sigma, and keeps audio clean.
+uses 16x.  The second H3 pass must receive a sigma-aligned version of the
+first pass output.  Passing an interpolated latent straight into
+``DisableNoise`` applies the flow scale a second time (rings/grids); adding a
+fresh noise field at a near-1.0 split sigma creates coloured speckles.  The
+combined node below upscales video only and pre-cancels that second scale.
 """
 
 from __future__ import annotations
@@ -102,16 +103,16 @@ class MiniMaxH3CombineAVLatent:
         return (_plain_latent(video, NestedTensor((video_samples, audio_samples))),)
 
 
-class MiniMaxH3VideoLatentUpscaleReNoise:
-    """H3-specific pass-two handoff: video upscale + CONST re-noise, audio lock.
+class MiniMaxH3VideoLatentUpscaleSigmaAlign:
+    """H3-specific pass-two handoff: video upscale + flow sigma alignment.
 
     ``SamplerCustomAdvanced`` applies its own flow-noise mixing.  Therefore the
     returned latent is inverse-scaled so feeding it through ``DisableNoise``
-    reconstructs ``sigma * video_noise + (1 - sigma) * upscaled_video``.  The
-    audio stream receives zero noise and is pre-divided by ``1 - sigma`` so it
-    enters pass two unchanged.  It intentionally does not use Comfy's inpaint
-    mask to lock audio: that wrapper reinjects the pre-divided carry into H3's
-    joint transformer and corrupts the video stream.
+    restores the first pass state exactly once the sampler receives
+    ``DisableNoise``.  No fresh noise is added at the split sigma: at two Turbo
+    steps that sigma is close to one, and new independent noise becomes visible
+    as unrelated coloured lights.  Audio is not spatially upscaled and follows
+    the same alignment, preserving the joint AV sampling contract.
     """
 
     @classmethod
@@ -120,7 +121,6 @@ class MiniMaxH3VideoLatentUpscaleReNoise:
             "required": {
                 "samples": ("LATENT",),
                 "model": ("MODEL",),
-                "noise": ("NOISE",),
                 "sigmas": ("SIGMAS",),
                 "width": ("INT", {"default": 1920, "min": 32, "max": 16384, "step": 32}),
                 "height": ("INT", {"default": 1088, "min": 32, "max": 16384, "step": 32}),
@@ -129,15 +129,15 @@ class MiniMaxH3VideoLatentUpscaleReNoise:
         }
 
     RETURN_TYPES = ("LATENT",)
-    FUNCTION = "upscale_renoise"
+    FUNCTION = "upscale_sigma_align"
     CATEGORY = "model/latent/minimax"
 
-    def upscale_renoise(self, samples, model, noise, sigmas, width: int, height: int, upscale_method: str):
+    def upscale_sigma_align(self, samples, model, sigmas, width: int, height: int, upscale_method: str):
         packed = samples["samples"]
         if not getattr(packed, "is_nested", False):
-            raise ValueError("MiniMax H3 re-noise requires a joint video+audio latent")
+            raise ValueError("MiniMax H3 sigma alignment requires a joint video+audio latent")
         if len(sigmas) < 2:
-            raise ValueError("MiniMax H3 re-noise requires a non-empty second-pass sigma schedule")
+            raise ValueError("MiniMax H3 sigma alignment requires a non-empty second-pass sigma schedule")
         sigma = sigmas[0]
         sigma_value = float(sigma)
         if not 0.0 < sigma_value < 1.0:
@@ -149,24 +149,16 @@ class MiniMaxH3VideoLatentUpscaleReNoise:
         video = _upscale_video(video, width, height, upscale_method)
         handoff = _plain_latent(samples, NestedTensor((video, audio)))
 
-        # Draw fresh, independent target-grid noise for video only.  Copying or
-        # interpolating the low-resolution noise is precisely what causes grid /
-        # ring artifacts during a high-sigma continuation.
-        generated = noise.generate_noise(handoff)
-        noise_video, _ = generated.unbind()
-        noise_audio = torch.zeros_like(audio, device=noise_video.device)
-
         process_in = model.get_model_object("process_latent_in")
         process_out = model.get_model_object("process_latent_out")
         model_sampling = model.get_model_object("model_sampling")
         video_in, audio_in = process_in(handoff["samples"]).unbind()
 
-        # CONST flow: SamplerCustomAdvanced will later multiply the supplied
-        # latent by (1-sigma) because it receives DisableNoise.  Inverse-scale
-        # now so the sampler starts exactly at the intended noisy video state.
-        video_mixed = model_sampling.noise_scaling(sigma, noise_video.to(video_in), video_in)
-        video_handoff = model_sampling.inverse_noise_scaling(sigma, video_mixed)
-        audio_handoff = audio_in / (1.0 - sigma)
+        # SamplerCustomAdvanced with DisableNoise applies `(1 - sigma)` to the
+        # latent.  The first pass is already at this sigma, therefore only
+        # inverse-scale it here; do not add a new noise field at this stage.
+        video_handoff = model_sampling.inverse_noise_scaling(sigma, video_in)
+        audio_handoff = model_sampling.inverse_noise_scaling(sigma, audio_in)
         combined = process_out(NestedTensor((video_handoff, audio_handoff)))
 
         return (_plain_latent(samples, combined),)
@@ -176,12 +168,12 @@ NODE_CLASS_MAPPINGS = {
     "MiniMaxH3SplitAVLatent": MiniMaxH3SplitAVLatent,
     "MiniMaxH3VideoLatentUpscale": MiniMaxH3VideoLatentUpscale,
     "MiniMaxH3CombineAVLatent": MiniMaxH3CombineAVLatent,
-    "MiniMaxH3VideoLatentUpscaleReNoise": MiniMaxH3VideoLatentUpscaleReNoise,
+    "MiniMaxH3VideoLatentUpscaleSigmaAlign": MiniMaxH3VideoLatentUpscaleSigmaAlign,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3SplitAVLatent": "MiniMax H3 Split AV Latent",
     "MiniMaxH3VideoLatentUpscale": "MiniMax H3 Video Latent Upscale",
     "MiniMaxH3CombineAVLatent": "MiniMax H3 Combine AV Latent",
-    "MiniMaxH3VideoLatentUpscaleReNoise": "MiniMax H3 Video Latent Upscale + Re-noise",
+    "MiniMaxH3VideoLatentUpscaleSigmaAlign": "MiniMax H3 Video Latent Upscale + Sigma Align",
 }
