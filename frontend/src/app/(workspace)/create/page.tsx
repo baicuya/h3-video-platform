@@ -219,7 +219,7 @@ export default function CreatePage() {
       if (typeof draft.prompt === "string") setPrompt(draft.prompt);
       if (isGenerationDuration(draft.duration)) setDuration(draft.duration);
       if (["16:9", "9:16", "1:1", "4:3", "3:4"].includes(draft.aspectRatio ?? "")) setAspectRatio(draft.aspectRatio as string);
-      if (["768p", "1080p"].includes(draft.resolution ?? "")) setResolution(draft.resolution as string);
+      if (["480p", "720p", "768p", "1080p"].includes(draft.resolution ?? "")) setResolution(draft.resolution as string);
       if (typeof draft.seed === "number") setSeed(draft.seed);
       if (draft.resolution !== "1080p" && draft.generationProfile && generationProfiles.some((item) => item.id === draft.generationProfile)) {
         setGenerationProfile(draft.generationProfile);
@@ -720,7 +720,7 @@ export default function CreatePage() {
               <label className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
                 清晰度
                 <select className="ml-2 bg-transparent font-medium text-slate-800 outline-none" value={resolution} onChange={(event) => { const nextResolution = event.target.value; setResolution(nextResolution); if (nextResolution === "1080p") setGenerationProfile("turbo"); }}>
-                  <option value="768p">768p</option><option value="1080p">1080p</option>
+                  <option value="480p">480p</option><option value="720p">720p</option><option value="768p">768p</option><option value="1080p">1080p</option>
                 </select>
               </label>
               {resolution === "1080p" && <p className="mt-2 text-xs text-amber-600">1080p 使用高清二次采样，生成时间会明显增加</p>}
