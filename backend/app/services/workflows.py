@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import secrets
 from pathlib import Path
 from typing import Any
@@ -50,14 +51,108 @@ ASPECT_DIMENSIONS = {
     ("1:1", "768p"): (768, 768),
     ("4:3", "480p"): (640, 480),
     ("3:4", "480p"): (480, 640),
+    ("16:9", "1080p"): (1376, 768),
+    ("9:16", "1080p"): (768, 1376),
+    ("1:1", "1080p"): (768, 768),
+    ("4:3", "1080p"): (1024, 768),
+    ("3:4", "1080p"): (768, 1024),
 }
+
+H3_1080P_OUTPUT_DIMENSIONS = {
+    "16:9": (1920, 1080),
+    "9:16": (1080, 1920),
+    "1:1": (1080, 1080),
+    "4:3": (1440, 1080),
+    "3:4": (1080, 1440),
+}
+H3_1080P_TOTAL_STEPS = 8
+H3_1080P_FIRST_PASS_STEPS = 2
 
 
 class WorkflowService:
-    version = "comfy-template-0.11.31-turbo.1"
+    version = "comfy-template-0.11.31-turbo.1080p.1"
 
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or get_settings().workflow_root
+
+    @staticmethod
+    def workflow_name_for(mode: str, resolution: str) -> str:
+        if resolution == "1080p":
+            return f"h3_{mode}_1080p_latent_upscale_int8.json"
+        return f"h3_{mode}_int8.json"
+
+    @staticmethod
+    def _round_up_to_canvas_multiple(value: int) -> int:
+        return int(math.ceil(value / 32) * 32)
+
+    def _1080p_dimensions(self, aspect_ratio: str) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int]]:
+        """Return (first-pass canvas, model canvas, exact encoded output)."""
+        output = H3_1080P_OUTPUT_DIMENSIONS[aspect_ratio]
+        short_edge = min(output)
+        initial = tuple(max(32, round(axis * 768 / short_edge / 32) * 32) for axis in output)
+        model_canvas = tuple(self._round_up_to_canvas_multiple(axis) for axis in output)
+        return initial, model_canvas, output
+
+    @staticmethod
+    def _configure_1080p_workflow(
+        workflow: dict[str, Any], *, model_width: int, model_height: int,
+        output_width: int, output_height: int,
+    ) -> None:
+        """Add H3's two-pass video-only latent upscale graph to a base template."""
+        workflow["8"]["inputs"]["steps"] = H3_1080P_TOTAL_STEPS
+        workflow["10"]["inputs"]["sigmas"] = ["20", 0]
+        workflow.update(
+            {
+                "20": {
+                    "class_type": "SplitSigmas",
+                    "inputs": {"sigmas": ["8", 0], "step": H3_1080P_FIRST_PASS_STEPS},
+                    "_meta": {"title": "Split H3 Turbo sigmas after first pass"},
+                },
+                "21": {
+                    "class_type": "MiniMaxH3SplitAVLatent",
+                    "inputs": {"samples": ["10", 0]},
+                    "_meta": {"title": "Separate H3 video and audio latents"},
+                },
+                "22": {
+                    "class_type": "MiniMaxH3VideoLatentUpscale",
+                    "inputs": {
+                        "samples": ["21", 0], "width": model_width, "height": model_height,
+                        "upscale_method": "bicubic",
+                    },
+                    "_meta": {"title": "Upscale H3 video latent only"},
+                },
+                "23": {
+                    "class_type": "MiniMaxH3CombineAVLatent",
+                    "inputs": {"video": ["22", 0], "audio": ["21", 1]},
+                    "_meta": {"title": "Recombine upscaled video with original audio"},
+                },
+                "24": {
+                    "class_type": "DisableNoise",
+                    "inputs": {},
+                    "_meta": {"title": "Continue from split sigma without new noise"},
+                },
+                "25": {
+                    "class_type": "SamplerCustomAdvanced",
+                    "inputs": {
+                        "noise": ["24", 0], "guider": ["9", 0], "sampler": ["7", 0],
+                        "sigmas": ["20", 1], "latent_image": ["23", 0],
+                    },
+                    "_meta": {"title": "H3 second-pass detail sampling"},
+                },
+                "26": {
+                    "class_type": "ImageCrop",
+                    "inputs": {
+                        "image": ["11", 0], "width": output_width, "height": output_height,
+                        "x": (model_width - output_width) // 2,
+                        "y": (model_height - output_height) // 2,
+                    },
+                    "_meta": {"title": "Crop model canvas to exact 1080p output"},
+                },
+            }
+        )
+        workflow["11"]["inputs"]["samples"] = ["25", 0]
+        workflow["12"]["inputs"]["samples"] = ["25", 0]
+        workflow["13"]["inputs"]["images"] = ["26", 0]
 
     def build(
         self,
@@ -66,10 +161,10 @@ class WorkflowService:
     ) -> dict[str, Any]:
         if job.mode not in WORKFLOW_NODE_MAP:
             raise ValueError(f"Unsupported workflow mode: {job.mode}")
-        expected_name = f"h3_{job.mode}_int8.json"
+        expected_name = self.workflow_name_for(job.mode, job.resolution)
         if job.workflow_name != expected_name:
             raise ValueError(f"Unexpected workflow name: {job.workflow_name}")
-        template_path = self.root / expected_name
+        template_path = self.root / f"h3_{job.mode}_int8.json"
         with template_path.open("r", encoding="utf-8") as handle:
             workflow = copy.deepcopy(json.load(handle))
         node_map = WORKFLOW_NODE_MAP[job.mode]
@@ -86,6 +181,9 @@ class WorkflowService:
             raise ValueError(
                 f"Generation profile {job.generation_profile} requires {expected_steps} steps"
             )
+        if job.resolution == "1080p" and job.generation_profile != "turbo":
+            raise ValueError("1080p requires the fixed Turbo 8-step profile")
+
 
         if profile["accelerated"]:
             workflow["900"] = {
@@ -105,6 +203,12 @@ class WorkflowService:
             }
             workflow["8"]["inputs"]["model"] = ["900", 0]
             workflow["9"]["inputs"]["model"] = ["900", 0]
+        if job.resolution == "1080p":
+            _, (model_width, model_height), (output_width, output_height) = self._1080p_dimensions(job.aspect_ratio)
+            self._configure_1080p_workflow(
+                workflow, model_width=model_width, model_height=model_height,
+                output_width=output_width, output_height=output_height,
+            )
 
         width, height = ASPECT_DIMENSIONS.get(
             (job.aspect_ratio, job.resolution),

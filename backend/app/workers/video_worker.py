@@ -121,9 +121,25 @@ async def process_job(job_id: str) -> None:
             job.comfy_prompt_id = prompt_id
             await update_job(db, job, status="running", stage="生成中")
 
+            if job.resolution == "1080p":
+                await update_job(db, job, status="running", stage="第一次采样", progress=0.05)
+            hq_stage = "第一次采样"
+
             async for event in client.watch_execution(prompt_id):
                 if job.status == "cancelled":
                     return
+                if job.resolution == "1080p":
+                    data = event.get("data", {})
+                    if event.get("type") == "executing":
+                        node_id = str(data.get("node"))
+                        hq_stage = {"10": "第一次采样", "20": "高清 Latent 放大", "21": "高清 Latent 放大", "22": "高清 Latent 放大", "23": "高清 Latent 放大", "24": "第二次采样", "25": "第二次采样", "11": "视频解码", "12": "视频解码", "26": "视频解码", "13": "音视频合成", "14": "音视频合成"}.get(node_id, hq_stage)
+                        await update_job(db, job, stage=hq_stage, progress={"第一次采样": 0.10, "高清 Latent 放大": 0.43, "第二次采样": 0.50, "视频解码": 0.88, "音视频合成": 0.95}[hq_stage])
+                    elif event.get("type") == "progress":
+                        value, maximum = data.get("value"), data.get("max")
+                        if isinstance(value, int) and isinstance(maximum, int) and maximum > 0:
+                            progress = (0.10 + 0.30 * value / maximum) if hq_stage == "第一次采样" else (0.50 + 0.36 * value / maximum) if hq_stage == "第二次采样" else (job.progress or 0.43)
+                            await update_job(db, job, stage=hq_stage, progress=progress)
+                    continue
                 if event.get("type") == "progress":
                     data = event.get("data", {})
                     value, maximum = data.get("value"), data.get("max")
@@ -167,6 +183,9 @@ async def process_job(job_id: str) -> None:
                 "OUT_OF_MEMORY" if "out of memory" in str(exc).lower() else "GENERATION_FAILED"
             )
             job.error_message = str(exc)[:2000]
+            if job.resolution == "1080p":
+                job.stage = "1080p 生成失败"
+                job.error_message = "1080p 生成失败：GPU 显存不足" if job.error_code == "OUT_OF_MEMORY" else f"1080p 生成失败：{str(exc)[:1800]}"
             job.finished_at = datetime.now(UTC)
             await db.commit()
             await publish(job)

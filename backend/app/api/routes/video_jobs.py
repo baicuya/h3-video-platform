@@ -122,6 +122,8 @@ async def enqueue_job(
     if payload.mode == "ref2va" and not settings.ref2va_enabled:
         raise HTTPException(status_code=422, detail="全能参考尚未启用")
     await validate_assets(db, user, payload.mode, payload.asset_ids)
+    if payload.resolution == "1080p" and payload.generation_profile != "turbo":
+        raise HTTPException(status_code=422, detail="1080p 仅支持固定的 Turbo 8 步档位")
     profile = GENERATION_PROFILES[payload.generation_profile]
     position = int(await redis.llen(QUEUE_KEY)) + 1
     job = VideoJob(
@@ -139,7 +141,7 @@ async def enqueue_job(
         flow_shift=payload.flow_shift,
         audio_flow_shift=payload.audio_flow_shift,
         input_assets=payload.asset_ids,
-        workflow_name=f"h3_{payload.mode}_int8.json",
+        workflow_name=WorkflowService.workflow_name_for(payload.mode, payload.resolution),
         workflow_version=WorkflowService.version,
         queue_position=position,
         progress=None,
@@ -162,6 +164,7 @@ async def enqueue_job(
             detail="任务队列暂时不可用，请稍后重试",
         ) from exc
     return job
+    job.workflow_name = WorkflowService.workflow_name_for(payload.mode, payload.resolution)
 
 
 @router.post("", response_model=VideoJobQueued, status_code=201)

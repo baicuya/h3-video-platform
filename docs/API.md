@@ -74,6 +74,8 @@
 
 `model_variant` 仅支持 `int8`，省略时默认使用 `int8`。`generation_profile` 由服务端映射为固定工作流参数：`turbo` 为 Turbo LoRA 8 步（默认、推荐），`fast` 为 Turbo LoRA 6 步，`quality` 为不加载 Turbo LoRA 的原始 20 步。API 不接受客户端自定义步数。
 
+`resolution` 支持既有的 `480p`、`720p`、`768p`，以及高清 `1080p`。`1080p` 固定为 Turbo 8 步：前 2 步在约 768p 的 H3 AV latent 上采样，分离后仅放大 video latent，使用同一条 sigma schedule 的剩余 6 步完成细节；audio latent 不缩放也不重采噪。最终输出为 16:9 的 1920×1080 或 9:16 的 1080×1920。非 Turbo 的 1080p 请求会返回 422。
+
 `t2v` 不需要素材；`i2v` 接受一张首帧和可选的一张尾帧，顺序为首帧、尾帧；`ref2va` 最多接受 9 张图片、3 个视频、3 个音频，全部素材合计最多 12 个。参考视频总时长和参考音频总时长分别不能超过 15 秒，单个视频或音频不能短于 2 秒，且不能只上传音频。前后端都会执行同样的限制校验。任务数据和输出默认仅所有者可见，管理员可按后端授权规则查看详情。
 
 Ref2VA 的 `asset_ids` 保留用户提交顺序，后端按素材类型映射到本机 ComfyUI prompt graph：

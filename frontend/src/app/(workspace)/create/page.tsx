@@ -219,9 +219,9 @@ export default function CreatePage() {
       if (typeof draft.prompt === "string") setPrompt(draft.prompt);
       if (isGenerationDuration(draft.duration)) setDuration(draft.duration);
       if (["16:9", "9:16", "1:1", "4:3", "3:4"].includes(draft.aspectRatio ?? "")) setAspectRatio(draft.aspectRatio as string);
-      if (["480p", "720p", "768p"].includes(draft.resolution ?? "")) setResolution(draft.resolution as string);
+      if (["768p", "1080p"].includes(draft.resolution ?? "")) setResolution(draft.resolution as string);
       if (typeof draft.seed === "number") setSeed(draft.seed);
-      if (draft.generationProfile && generationProfiles.some((item) => item.id === draft.generationProfile)) {
+      if (draft.resolution !== "1080p" && draft.generationProfile && generationProfiles.some((item) => item.id === draft.generationProfile)) {
         setGenerationProfile(draft.generationProfile);
       }
       if (typeof draft.advanced === "boolean") setAdvanced(draft.advanced);
@@ -716,18 +716,21 @@ export default function CreatePage() {
                 <option>16:9</option><option>9:16</option><option>1:1</option><option>4:3</option><option>3:4</option>
               </select>
             </label>
-            <label className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
-              清晰度
-              <select className="ml-2 bg-transparent font-medium text-slate-800 outline-none" value={resolution} onChange={(event) => setResolution(event.target.value)}>
-                <option value="480p">480p</option><option value="720p">720p</option><option value="768p">768p</option>
-              </select>
-            </label>
+            <div>
+              <label className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+                清晰度
+                <select className="ml-2 bg-transparent font-medium text-slate-800 outline-none" value={resolution} onChange={(event) => { const nextResolution = event.target.value; setResolution(nextResolution); if (nextResolution === "1080p") setGenerationProfile("turbo"); }}>
+                  <option value="768p">768p</option><option value="1080p">1080p</option>
+                </select>
+              </label>
+              {resolution === "1080p" && <p className="mt-2 text-xs text-amber-600">1080p 使用高清二次采样，生成时间会明显增加</p>}
+            </div>
             <button type="button" className="flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-medium text-slate-500 hover:bg-slate-100" onClick={() => setAdvanced(!advanced)}>
               高级设置 <ChevronDown className={cn("size-3.5 transition", advanced && "rotate-180")} />
             </button>
             <label className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-600">
               生成档位
-              <select className="ml-2 bg-transparent font-semibold text-violet-800 outline-none" value={generationProfile} onChange={(event) => setGenerationProfile(event.target.value as GenerationProfile)}>
+              <select className="ml-2 bg-transparent font-semibold text-violet-800 outline-none" value={generationProfile} disabled={resolution === "1080p"} onChange={(event) => setGenerationProfile(event.target.value as GenerationProfile)}>
                 {generationProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}
               </select>
             </label>
