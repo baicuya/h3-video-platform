@@ -119,10 +119,12 @@ def test_1080p_uses_target_renoise_and_target_conditioning(mode: str):
     assert workflow["20"]["inputs"]["step"] == 2
     assert workflow["8"]["inputs"]["scheduler"] == "beta"
     assert workflow["8"]["inputs"]["steps"] == 8
-    assert workflow["22"]["class_type"] == "MiniMaxH3VideoLatentUpscaleSigmaAlign"
+    assert workflow["22"]["class_type"] == "MiniMaxH3VideoLatentUpscaleContinuation"
     assert workflow["22"]["inputs"]["samples"] == ["10", 0]
     assert "noise" not in workflow["22"]["inputs"]
-    assert workflow["22"]["inputs"]["sigmas"] == ["20", 1]
+    assert "model" not in workflow["22"]["inputs"]
+    assert "sigmas" not in workflow["22"]["inputs"]
+    assert workflow["22"]["inputs"]["upscale_method"] == "bislerp"
     assert workflow["25"]["inputs"]["noise"] == ["24", 0]
     assert workflow["25"]["inputs"]["guider"] == ["28", 0]
     assert workflow["27"]["inputs"]["width"] == 1920

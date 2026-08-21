@@ -113,13 +113,12 @@ class WorkflowService:
                     "_meta": {"title": "Split H3 Turbo sigmas after first pass"},
                 },
                 "22": {
-                    "class_type": "MiniMaxH3VideoLatentUpscaleSigmaAlign",
+                    "class_type": "MiniMaxH3VideoLatentUpscaleContinuation",
                     "inputs": {
-                        "samples": ["10", 0], "model": ["900", 0],
-                        "sigmas": ["20", 1], "width": model_width, "height": model_height,
-                        "upscale_method": "bicubic",
+                        "samples": ["10", 0], "width": model_width, "height": model_height,
+                        "upscale_method": "bislerp",
                     },
-                    "_meta": {"title": "Upscale H3 video latent and align second-pass sigma"},
+                    "_meta": {"title": "Upscale H3 video latent for sigma-continuous second pass"},
                 },
                 "24": {
                     "class_type": "DisableNoise",

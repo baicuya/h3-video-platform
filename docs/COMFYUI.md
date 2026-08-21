@@ -62,7 +62,7 @@ Ref2VA 输出经 `ffprobe`：H.264 608×352 24fps、AAC 32kHz 双声道、5.167 
 
 `WorkflowService` 每次深复制 JSON，根据固定 node map 写入 prompt、尺寸、帧数、seed、输出前缀和已上传图片名。`turbo`/`fast` 档动态注入 `MiniMaxH3TurboLoRA` 和 `MiniMaxH3TurboSampler`，分别固定 8/6 步；`quality` 使用原始 `res_multistep` 20 步采样。后端会先确认关键节点存在；不会用字符串全局替换，也不接受用户提交任意 workflow 或任意步数。
 
-`1080p` 选择独立的 `h3_*_1080p_latent_upscale_int8.json` 逻辑工作流：以 `SplitSigmas(step=2)` 把 Turbo 8 步切为 2+6。首次采样后的 H3 嵌套 AV latent 只在 video 流按 H3 视频 VAE 的 16 倍空间放大，再对二采起始 sigma 做 inverse 对齐；不会在接近 1.0 的 split sigma 额外灌入随机噪声。audio latent 不放大，随同一 sigma 对齐继续。随后用目标尺寸重新编码的 T2V/FL2VA/Ref2VA conditioning 和剩余 6 个 sigma 完成细节。因模型 canvas 必须是 32 的倍数，16:9 在 1920×1088 latent canvas 解码后只裁去上下各 4 像素得到 1920×1080，并非图片或 FFmpeg 拉伸。
+`1080p` 选择独立的 `h3_*_1080p_latent_upscale_int8.json` 逻辑工作流：以 `SplitSigmas(step=2)` 把 Turbo 8 步切为 2+6。首次采样已经输出 ComfyUI 的 sigma 对齐 latent，因此只在 video 流按 H3 视频 VAE 的 16 倍空间使用 bislerp 放大；不额外注入随机噪声，也不重复 inverse scale。audio latent 不放大，保持原值进入二采。随后用目标尺寸重新编码的 T2V/FL2VA/Ref2VA conditioning 和剩余 6 个 sigma 完成细节。因模型 canvas 必须是 32 的倍数，16:9 在 1920×1088 latent canvas 解码后只裁去上下各 4 像素得到 1920×1080，并非图片或 FFmpeg 拉伸。
 
 帧数按 24fps 并对齐 H3 的 17 帧步长。worker 固定单并发，以 Redis 锁保护 GPU。生产输出由 ComfyUI 拉回后保存到 `/home/ubuntu/data/outputs/{user_id}/{job_id}.mp4`。
 
