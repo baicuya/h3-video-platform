@@ -103,6 +103,33 @@ def test_quality_profile_does_not_load_turbo_lora():
     assert workflow["8"]["inputs"]["steps"] == 20
 
 
+@pytest.mark.parametrize("mode", ["t2v", "i2v", "ref2va"])
+def test_1080p_uses_target_renoise_and_target_conditioning(mode: str):
+    job = make_job(mode, "turbo")
+    job.resolution = "1080p"
+    job.workflow_name = f"h3_{mode}_1080p_latent_upscale_int8.json"
+    assets = {
+        "t2v": [],
+        "i2v": [("image", "first.png"), ("image", "last.png")],
+        "ref2va": [("image", "person.png"), ("video", "motion.mp4")],
+    }[mode]
+
+    workflow = WorkflowService(root=WORKFLOW_ROOT).build(job, assets)
+
+    assert workflow["20"]["inputs"]["step"] == 2
+    assert workflow["22"]["class_type"] == "MiniMaxH3VideoLatentUpscaleReNoise"
+    assert workflow["22"]["inputs"]["samples"] == ["10", 0]
+    assert workflow["22"]["inputs"]["noise"] == ["6", 0]
+    assert workflow["22"]["inputs"]["sigmas"] == ["20", 1]
+    assert workflow["25"]["inputs"]["noise"] == ["24", 0]
+    assert workflow["25"]["inputs"]["guider"] == ["28", 0]
+    assert workflow["27"]["inputs"]["width"] == 1920
+    assert workflow["27"]["inputs"]["height"] == 1088
+    assert workflow["27"]["inputs"]["length"] == workflow["5"]["inputs"]["length"]
+    assert workflow["28"]["inputs"] == {"model": ["900", 0], "conditioning": ["27", 0]}
+    assert workflow["13"]["inputs"]["images"] == ["26", 0]
+
+
 def test_profile_rejects_mismatched_steps():
     job = make_job("t2v", "turbo")
     job.steps = 20

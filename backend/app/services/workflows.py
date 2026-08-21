@@ -108,23 +108,14 @@ class WorkflowService:
                     "inputs": {"sigmas": ["8", 0], "step": H3_1080P_FIRST_PASS_STEPS},
                     "_meta": {"title": "Split H3 Turbo sigmas after first pass"},
                 },
-                "21": {
-                    "class_type": "MiniMaxH3SplitAVLatent",
-                    "inputs": {"samples": ["10", 0]},
-                    "_meta": {"title": "Separate H3 video and audio latents"},
-                },
                 "22": {
-                    "class_type": "MiniMaxH3VideoLatentUpscale",
+                    "class_type": "MiniMaxH3VideoLatentUpscaleReNoise",
                     "inputs": {
-                        "samples": ["21", 0], "width": model_width, "height": model_height,
+                        "samples": ["10", 0], "model": ["900", 0], "noise": ["6", 0],
+                        "sigmas": ["20", 1], "width": model_width, "height": model_height,
                         "upscale_method": "bicubic",
                     },
-                    "_meta": {"title": "Upscale H3 video latent only"},
-                },
-                "23": {
-                    "class_type": "MiniMaxH3CombineAVLatent",
-                    "inputs": {"video": ["22", 0], "audio": ["21", 1]},
-                    "_meta": {"title": "Recombine upscaled video with original audio"},
+                    "_meta": {"title": "Upscale H3 video latent and re-noise video only"},
                 },
                 "24": {
                     "class_type": "DisableNoise",
@@ -135,7 +126,7 @@ class WorkflowService:
                     "class_type": "SamplerCustomAdvanced",
                     "inputs": {
                         "noise": ["24", 0], "guider": ["9", 0], "sampler": ["7", 0],
-                        "sigmas": ["20", 1], "latent_image": ["23", 0],
+                        "sigmas": ["20", 1], "latent_image": ["22", 0],
                     },
                     "_meta": {"title": "H3 second-pass detail sampling"},
                 },
@@ -148,11 +139,24 @@ class WorkflowService:
                     },
                     "_meta": {"title": "Crop model canvas to exact 1080p output"},
                 },
+                "27": {
+                    "class_type": workflow["5"]["class_type"],
+                    "inputs": copy.deepcopy(workflow["5"]["inputs"]),
+                    "_meta": {"title": "MiniMax H3 target-resolution conditioning for second pass"},
+                },
+                "28": {
+                    "class_type": "BasicGuider",
+                    "inputs": {"model": ["900", 0], "conditioning": ["27", 0]},
+                    "_meta": {"title": "H3 second-pass target-resolution guider"},
+                },
             }
         )
+        workflow["27"]["inputs"]["width"] = model_width
+        workflow["27"]["inputs"]["height"] = model_height
         workflow["11"]["inputs"]["samples"] = ["25", 0]
         workflow["12"]["inputs"]["samples"] = ["25", 0]
         workflow["13"]["inputs"]["images"] = ["26", 0]
+        workflow["25"]["inputs"]["guider"] = ["28", 0]
 
     def build(
         self,
@@ -203,13 +207,6 @@ class WorkflowService:
             }
             workflow["8"]["inputs"]["model"] = ["900", 0]
             workflow["9"]["inputs"]["model"] = ["900", 0]
-        if job.resolution == "1080p":
-            _, (model_width, model_height), (output_width, output_height) = self._1080p_dimensions(job.aspect_ratio)
-            self._configure_1080p_workflow(
-                workflow, model_width=model_width, model_height=model_height,
-                output_width=output_width, output_height=output_height,
-            )
-
         width, height = ASPECT_DIMENSIONS.get(
             (job.aspect_ratio, job.resolution),
             ASPECT_DIMENSIONS.get((job.aspect_ratio, "480p"), (864, 480)),
@@ -299,4 +296,10 @@ class WorkflowService:
                     "_meta": {"title": f"Reference audio {index + 1}"},
                 }
                 condition[f"ref_audios.ref_audio_{index}"] = [node_id, 0]
+        if job.resolution == "1080p":
+            _, (model_width, model_height), (output_width, output_height) = self._1080p_dimensions(job.aspect_ratio)
+            self._configure_1080p_workflow(
+                workflow, model_width=model_width, model_height=model_height,
+                output_width=output_width, output_height=output_height,
+            )
         return workflow
